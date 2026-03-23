@@ -70,7 +70,7 @@ class DroneInterceptEnv(BaseAviary):
         self.defender_ctrl = DSLPIDControl(drone_model=DroneModel.CF2X)
 
         # Velocity limit for defender (m/s)
-        self.speed_limit = 0.03 * self.MAX_SPEED_KMH * (1000 / 3600)
+        self.speed_limit = 0.15 * self.MAX_SPEED_KMH * (1000 / 3600)
 
         # Tracking
         self.prev_dist = None
