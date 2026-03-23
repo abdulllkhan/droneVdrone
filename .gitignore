@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Training artifacts
+models/*.zip
+logs/
+runs/
+tensorboard_logs/
+
+# PyBullet recordings
+*.mp4
+*.gif
+recording_*/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# GPG keys (accidentally added)
+*.gpg
+
+# Weights & large files
+*.pt
+*.pth
+*.onnx
+*.pkl
