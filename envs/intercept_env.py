@@ -25,24 +25,24 @@ class DroneInterceptEnv(BaseAviary):
     """
     Single-agent RL environment for drone interception.
 
-    Drone 0 = Defender (RL agent)
+    Drone 0 = Defender (RL agent, velocity-controlled)
     Drone 1 = Attacker (scripted PID, flies toward target)
 
-    Observation (22-dim):
+    Observation (19-dim):
         [0:3]   defender position (x, y, z)
         [3:6]   defender velocity (vx, vy, vz)
-        [6:9]   defender orientation (roll, pitch, yaw)
-        [9:12]  attacker position (x, y, z)
-        [12:15] attacker velocity (vx, vy, vz)
-        [15:18] relative position (attacker - defender)
-        [18]    distance to attacker
-        [19:22] target position (x, y, z)
+        [6:9]   attacker position (x, y, z)
+        [9:12]  attacker velocity (vx, vy, vz)
+        [12:15] relative position (attacker - defender)
+        [15]    distance to attacker
+        [16:19] target position (x, y, z)
 
-    Action (4-dim):
-        Motor commands in [-1, 1], mapped to [0, MAX_RPM] internally.
+    Action (3-dim):
+        Desired velocity (vx, vy, vz) in [-1, 1], scaled to m/s.
+        PID controller converts to motor RPMs internally.
     """
 
-    OBS_DIM = 22
+    OBS_DIM = 19
 
     def __init__(self, gui=False, config=None):
         self.cfg = config or EnvConfig()
@@ -65,8 +65,12 @@ class DroneInterceptEnv(BaseAviary):
             user_debug_gui=False,
         )
 
-        # PID controller for the scripted attacker
+        # PID controllers: attacker (scripted) + defender (RL velocity → RPM)
         self.attacker_ctrl = DSLPIDControl(drone_model=DroneModel.CF2X)
+        self.defender_ctrl = DSLPIDControl(drone_model=DroneModel.CF2X)
+
+        # Velocity limit for defender (m/s)
+        self.speed_limit = 0.15 * self.MAX_SPEED_KMH * (1000 / 3600)
 
         # Tracking
         self.prev_dist = None
@@ -81,11 +85,11 @@ class DroneInterceptEnv(BaseAviary):
     # ------------------------------------------------------------------
 
     def _actionSpace(self):
-        """Single-agent: 4 motor commands in [-1, 1], mapped to RPMs."""
-        return spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+        """Single-agent: 3 velocity commands (vx, vy, vz) in [-1, 1]."""
+        return spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
 
     def _observationSpace(self):
-        """22-dim observation vector."""
+        """19-dim observation vector."""
         lo = np.full(self.OBS_DIM, -np.inf, dtype=np.float32)
         hi = np.full(self.OBS_DIM, np.inf, dtype=np.float32)
         return spaces.Box(low=lo, high=hi, dtype=np.float32)
@@ -99,16 +103,15 @@ class DroneInterceptEnv(BaseAviary):
         Step the environment with the defender's action.
 
         Args:
-            action: (4,) array in [-1, 1] — defender motor commands.
+            action: (3,) array in [-1, 1] — desired velocity (vx, vy, vz).
         """
-        # Build (2, 4) action array expected by BaseAviary
+        # Build (2, 4) action array expected by BaseAviary.
+        # Row 0: defender velocity command (3-dim, padded to 4).
+        # Row 1: attacker placeholder — _preprocessAction computes PID.
         full_action = np.zeros((2, 4), dtype=np.float32)
-        full_action[0] = np.asarray(action, dtype=np.float32)
-        # Attacker slot is a placeholder — _preprocessAction computes PID
+        full_action[0, :3] = np.asarray(action, dtype=np.float32)
         full_action[1] = 0.5
 
-        # BaseAviary.step() calls _preprocessAction (ours), runs physics,
-        # then calls our _computeObs/Reward/Terminated/Truncated/Info
         return super().step(full_action)
 
     def reset(self, seed=None, options=None):
@@ -116,8 +119,9 @@ class DroneInterceptEnv(BaseAviary):
         self.INIT_XYZS = self._random_positions()
         self.prev_dist = None
 
-        # Re-create PID controller to clear integral state
+        # Re-create PID controllers to clear integral state
         self.attacker_ctrl = DSLPIDControl(drone_model=DroneModel.CF2X)
+        self.defender_ctrl = DSLPIDControl(drone_model=DroneModel.CF2X)
 
         # super().reset() calls _housekeeping (resets step_counter),
         # then calls _computeObs() and _computeInfo()
@@ -132,19 +136,36 @@ class DroneInterceptEnv(BaseAviary):
         Convert RL action to RPMs for both drones.
 
         Args:
-            action: (2, 4) array — row 0 is defender [-1,1], row 1 is ignored.
+            action: (2, 4) array — row 0 is defender velocity cmd, row 1 ignored.
 
         Returns:
             (2, 4) RPM array.
         """
         rpms = np.zeros((2, 4))
 
-        # Defender: map [-1, 1] → [0, MAX_RPM]
-        rpms[0] = np.clip((action[0] + 1.0) / 2.0 * self.MAX_RPM, 0, self.MAX_RPM)
+        # Defender: velocity command → RPMs via PID
+        rpms[0] = self._compute_defender_rpms(action[0, :3])
 
         # Attacker: PID control toward target
         rpms[1] = self._compute_attacker_rpms()
 
+        return rpms
+
+    def _compute_defender_rpms(self, vel_cmd):
+        """Convert velocity command [-1, 1]^3 → RPMs using PID."""
+        state = self._getDroneStateVector(0)
+        target_vel = vel_cmd * self.speed_limit
+
+        rpms, _, _ = self.defender_ctrl.computeControl(
+            control_timestep=self.CTRL_TIMESTEP,
+            cur_pos=state[0:3],
+            cur_quat=state[3:7],
+            cur_vel=state[10:13],
+            cur_ang_vel=state[13:16],
+            target_pos=state[0:3],           # Hold current position
+            target_rpy=np.array([0, 0, state[9]]),  # Maintain yaw
+            target_vel=target_vel,
+        )
         return rpms
 
     def _compute_attacker_rpms(self):
@@ -163,13 +184,12 @@ class DroneInterceptEnv(BaseAviary):
     # ------------------------------------------------------------------
 
     def _computeObs(self):
-        """Build 22-dim observation vector."""
+        """Build 19-dim observation vector."""
         defender = self._getDroneStateVector(0)
         attacker = self._getDroneStateVector(1)
 
         def_pos = defender[0:3]
         def_vel = defender[10:13]
-        def_rpy = defender[7:10]
         att_pos = attacker[0:3]
         att_vel = attacker[10:13]
 
@@ -179,13 +199,12 @@ class DroneInterceptEnv(BaseAviary):
         obs = np.concatenate([
             def_pos,            # 3
             def_vel,            # 3
-            def_rpy,            # 3
             att_pos,            # 3
             att_vel,            # 3
             rel_pos,            # 3
             dist,               # 1
             self.target_pos,    # 3
-        ])  # Total: 22
+        ])  # Total: 19
 
         return obs.astype(np.float32)
 

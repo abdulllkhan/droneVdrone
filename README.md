@@ -64,12 +64,39 @@ tensorboard --logdir logs/tensorboard
 ### Evaluate a trained model
 
 ```bash
-python -m eval.evaluate --model models/defender_sac_final.zip --episodes 50
+python -m eval.evaluate --model models/best_model.zip --episodes 20
 ```
 
 Options:
 - `--gui` — visualize episodes in PyBullet 3D viewer
 - `--episodes 50` — number of evaluation episodes (default: 20)
+
+### Watch the model in 3D
+
+```bash
+python -m eval.evaluate --model models/best_model.zip --gui --episodes 5
+```
+
+Opens the PyBullet 3D viewer so you can watch the defender drone attempt to intercept the attacker in real-time.
+
+### Play against the model (manual control)
+
+```bash
+python -m eval.play --model models/best_model.zip
+```
+
+YOU control the attacker drone with keyboard — try to reach the red target while the trained defender tries to crash into you.
+
+| Key | Action |
+|---|---|
+| W / S | Forward / backward |
+| A / D | Left / right |
+| SPACE | Up |
+| LEFT SHIFT | Down |
+| R | Reset episode |
+| ESC | Quit |
+
+Click on the PyBullet window to give it keyboard focus. Run without `--model` to test controls against a random defender.
 
 ## Project Structure
 
@@ -81,7 +108,8 @@ droneVdrone/
 │   ├── config.py           # Hyperparameters and env settings
 │   └── train_defender.py   # SAC training pipeline
 ├── eval/
-│   └── evaluate.py         # Model evaluation + visualization
+│   ├── evaluate.py         # Model evaluation + stats
+│   └── play.py             # Manual play mode (you vs the AI)
 ├── models/                 # Saved trained models
 └── logs/                   # TensorBoard logs
 ```

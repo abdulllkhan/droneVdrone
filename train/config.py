@@ -17,7 +17,7 @@ class EnvConfig:
     altitude_min: float = 0.05    # Min altitude (meters)
 
     # Interception
-    intercept_dist: float = 0.15  # Collision threshold (meters)
+    intercept_dist: float = 0.50  # Interception threshold (meters)
     target_reached_dist: float = 0.3  # Attacker wins threshold (meters)
 
     # Attacker
