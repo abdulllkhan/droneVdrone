@@ -21,7 +21,7 @@ class EnvConfig:
     target_reached_dist: float = 0.3  # Attacker wins threshold (meters)
 
     # Attacker
-    attacker_speed_scale: float = 1.0  # Scale PID output (1.0 = full speed)
+    attacker_speed_scale: float = 0.6  # Scale PID output (1.0 = full speed)
 
     # Initialization ranges
     attacker_dist_range: tuple = (2.0, 3.0)   # Start distance from target
@@ -59,7 +59,7 @@ class TrainConfig:
     tensorboard_log: str = "logs/tensorboard"
 
     # Environment
-    n_envs: int = 4               # Parallel training environments
+    n_envs: int = 16              # Parallel training environments
     normalize_obs: bool = True
     normalize_reward: bool = True
 
