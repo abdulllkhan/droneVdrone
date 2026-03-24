@@ -216,6 +216,8 @@ class DroneInterceptEnv(BaseAviary):
         """
         Dense reward function:
         - Approach reward: positive for closing distance to attacker
+        - Proximity bonus: extra reward when within 1m (urgency to close last gap)
+        - Altitude match: penalty for being at wrong altitude vs attacker
         - Interception bonus: +100 on collision
         - Failure penalty: -100 if attacker reaches target
         - Time penalty: -0.01 per step to encourage speed
@@ -240,10 +242,19 @@ class DroneInterceptEnv(BaseAviary):
             approach_reward = (self.prev_dist - dist) * 10.0
         self.prev_dist = dist
 
+        # Proximity bonus — ramps up as drone gets within 1m
+        proximity_bonus = 0.0
+        if dist < 1.0:
+            proximity_bonus = (1.0 - dist) * 2.0
+
+        # Altitude match penalty — discourage drifting to wrong height
+        alt_diff = abs(def_pos[2] - att_pos[2])
+        alt_penalty = -alt_diff * 0.5
+
         # Time penalty
         time_penalty = -0.01
 
-        return approach_reward + time_penalty
+        return approach_reward + proximity_bonus + alt_penalty + time_penalty
 
     # ------------------------------------------------------------------
     # Termination / truncation
