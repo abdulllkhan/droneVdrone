@@ -64,12 +64,13 @@ def velocity_pid_to_throttle(
     mass: float,
     gravity: float,
     kp: float,
+    max_thrust_per_prop: float,
 ):
     """
     Convert desired velocity to 4 propeller throttles via a simple PID.
 
     For each drone, computes a desired net force from velocity error,
-    then maps it to individual propeller throttles.
+    then maps it to individual propeller throttles normalized by max thrust.
     """
     world_id = wp.tid()
     body_idx = world_id * bodies_per_world + body_offset
@@ -83,11 +84,11 @@ def velocity_pid_to_throttle(
     )
     desired = target_vel[world_id]
 
-    # PD velocity control -> desired force
+    # PD velocity control -> desired force (Newtons)
     vel_error = desired - vel
-    fx = vel_error[0] * kp
-    fy = vel_error[1] * kp
-    fz = vel_error[2] * kp + mass * gravity  # gravity compensation
+    fx = vel_error[0] * kp * mass
+    fy = vel_error[1] * kp * mass
+    fz = vel_error[2] * kp * mass + mass * gravity  # gravity compensation
 
     # Get drone's up vector in world frame
     up_local = wp.vec3(0.0, 0.0, 1.0)
@@ -96,7 +97,6 @@ def velocity_pid_to_throttle(
     thrust_total = wp.dot(wp.vec3(fx, fy, fz), up_world)
 
     # Simple mixer: distribute thrust + differential for roll/pitch
-    # Props at: (+arm, 0), (-arm, 0), (0, +arm), (0, -arm)
     right_local = wp.vec3(1.0, 0.0, 0.0)
     fwd_local = wp.vec3(0.0, 1.0, 0.0)
     right_world = wp.transform_vector(tf, right_local)
@@ -106,12 +106,16 @@ def velocity_pid_to_throttle(
     roll_torque = wp.dot(wp.vec3(fx, fy, fz), fwd_world) * arm_length
     pitch_torque = -wp.dot(wp.vec3(fx, fy, fz), right_world) * arm_length
 
-    base = thrust_total * 0.25
+    # Normalize by max thrust to get throttle [0, 1]
+    base = thrust_total / (4.0 * max_thrust_per_prop)
+    roll_diff = roll_torque / (4.0 * max_thrust_per_prop)
+    pitch_diff = pitch_torque / (4.0 * max_thrust_per_prop)
+
     # Prop 0: +Y, Prop 1: -Y, Prop 2: +X, Prop 3: -X
-    t0 = base + roll_torque * 0.25
-    t1 = base - roll_torque * 0.25
-    t2 = base + pitch_torque * 0.25
-    t3 = base - pitch_torque * 0.25
+    t0 = base + roll_diff
+    t1 = base - roll_diff
+    t2 = base + pitch_diff
+    t3 = base - pitch_diff
 
     prop_base = world_id * 8 + prop_offset  # 8 props per world (2 drones x 4)
     throttle_out[prop_base + 0] = wp.clamp(t0, 0.0, 1.0)
@@ -379,9 +383,8 @@ class NewtonInterceptVecEnv(VecEnv):
         self.max_steps = int(self.cfg.episode_secs * self.cfg.ctrl_freq)
         self.target_pos_wp = wp.vec3(*self.cfg.target_pos)
 
-        # Drone mass (computed from density + geometry)
-        # Approximate: 2 crossbar boxes, density=1750, total ~0.027 kg
-        self.drone_mass = 0.027
+        # Drone mass — will be read from Newton model after finalize()
+        self.drone_mass = 0.027  # placeholder, updated below
         # Gravity magnitude
         self.gravity = 9.81
 
@@ -389,8 +392,8 @@ class NewtonInterceptVecEnv(VecEnv):
         self.defender_speed_limit = 0.15 * 30.0 * (1000.0 / 3600.0)  # ~1.25 m/s
         self.attacker_speed = self.cfg.attacker_speed_scale * 0.8  # m/s
 
-        # PID gain for velocity controller
-        self.kp = 2.0
+        # PID gain for velocity controller (scales with mass)
+        self.kp = 5.0
 
         # Build scene: N worlds, each with 2 drones
         builder = nt.ModelBuilder(gravity=-self.gravity)
@@ -421,6 +424,13 @@ class NewtonInterceptVecEnv(VecEnv):
         self.model = builder.finalize()
         self.bodies_per_world = 2
         self.props_per_world = 8  # 4 per drone x 2 drones
+
+        # Read actual drone mass from Newton model
+        body_masses = self.model.body_mass.numpy()
+        self.drone_mass = float(body_masses[0])  # first body = defender
+
+        # Max thrust per propeller (for throttle normalization)
+        self.max_thrust_per_prop = float(all_props[0].max_thrust)
 
         # States (double buffered)
         self.state_0 = self.model.state()
@@ -531,6 +541,7 @@ class NewtonInterceptVecEnv(VecEnv):
                 self.drone_mass,
                 self.gravity,
                 self.kp,
+                self.max_thrust_per_prop,
             ),
             device=self.device,
         )
@@ -551,6 +562,7 @@ class NewtonInterceptVecEnv(VecEnv):
                 self.drone_mass,
                 self.gravity,
                 self.kp,
+                self.max_thrust_per_prop,
             ),
             device=self.device,
         )

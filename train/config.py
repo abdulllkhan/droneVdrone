@@ -53,7 +53,7 @@ class TrainConfig:
     # Logging & checkpoints
     log_dir: str = "logs"
     model_dir: str = "models"
-    checkpoint_freq: int = 10_000
+    checkpoint_freq: int = 100_000
     eval_freq: int = 5_000
     eval_episodes: int = 20
     tensorboard_log: str = "logs/tensorboard"
