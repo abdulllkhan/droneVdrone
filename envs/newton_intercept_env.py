@@ -6,6 +6,12 @@ NVIDIA's Newton physics engine (Warp backend). Each world contains
 a defender drone (RL agent) and an attacker drone (scripted).
 
 Compatible with Stable Baselines3 via VecEnv interface.
+
+Force model: Direct world-frame forces (no propeller simulation).
+The RL agent outputs velocity commands, and a PD controller applies
+body forces to track those velocities. This models the CrazyFlie's
+onboard firmware as a black box — physically valid for sim-to-real
+since the real drone also accepts velocity commands.
 """
 
 import numpy as np
@@ -19,64 +25,32 @@ from train.config import EnvConfig
 # Warp Kernels (run on GPU)
 # ------------------------------------------------------------------ #
 
-@wp.struct
-class Propeller:
-    body: int
-    pos: wp.vec3
-    dir: wp.vec3
-    max_thrust: float
-    max_torque: float
-    turning_direction: float
-
-
 @wp.kernel
-def compute_prop_wrenches(
-    props: wp.array(dtype=Propeller),
-    controls: wp.array(dtype=float),
-    body_q: wp.array(dtype=wp.transform),
-    body_com: wp.array(dtype=wp.vec3),
-    body_f: wp.array(dtype=wp.spatial_vector),
-):
-    """Apply propeller thrust and torque to drone bodies."""
-    tid = wp.tid()
-    prop = props[tid]
-    control = controls[tid]
-    tf = body_q[prop.body]
-    dir = wp.transform_vector(tf, prop.dir)
-    force = dir * prop.max_thrust * control
-    torque = dir * prop.max_torque * control * prop.turning_direction
-    moment_arm = wp.transform_point(tf, prop.pos) - wp.transform_point(tf, body_com[prop.body])
-    torque += wp.cross(moment_arm, force)
-    torque *= 0.8  # angular damping
-    wp.atomic_add(body_f, prop.body, wp.spatial_vector(force, torque))
-
-
-@wp.kernel
-def velocity_pid_to_throttle(
+def apply_velocity_force(
     body_q: wp.array(dtype=wp.transform),
     body_qd: wp.array(dtype=wp.spatial_vector),
     target_vel: wp.array(dtype=wp.vec3),
-    throttle_out: wp.array(dtype=float),
+    body_f: wp.array(dtype=wp.spatial_vector),
     bodies_per_world: int,
     body_offset: int,
-    prop_offset: int,
-    arm_length: float,
     mass: float,
     gravity: float,
     kp: float,
-    max_thrust_per_prop: float,
+    kd: float,
+    max_force: float,
+    angular_damping: float,
 ):
     """
-    Convert desired velocity to 4 propeller throttles via a simple PID.
+    Apply world-frame forces to track a desired velocity.
 
-    For each drone, computes a desired net force from velocity error,
-    then maps it to individual propeller throttles normalized by max thrust.
+    Computes a PD force from velocity error (world frame, no rotation
+    dependency), adds gravity compensation, clamps to physical limits,
+    and applies angular damping torque to keep the body upright.
     """
     world_id = wp.tid()
     body_idx = world_id * bodies_per_world + body_offset
 
-    # Current state
-    tf = body_q[body_idx]
+    # Current linear velocity
     vel = wp.vec3(
         body_qd[body_idx][0],
         body_qd[body_idx][1],
@@ -84,44 +58,30 @@ def velocity_pid_to_throttle(
     )
     desired = target_vel[world_id]
 
-    # PD velocity control -> desired force (Newtons)
+    # PD control force in world frame (NO gravity here)
     vel_error = desired - vel
-    fx = vel_error[0] * kp * mass
-    fy = vel_error[1] * kp * mass
-    fz = vel_error[2] * kp * mass + mass * gravity  # gravity compensation
+    ctrl_x = vel_error[0] * kp * mass - vel[0] * kd * mass
+    ctrl_y = vel_error[1] * kp * mass - vel[1] * kd * mass
+    ctrl_z = vel_error[2] * kp * mass - vel[2] * kd * mass
 
-    # Get drone's up vector in world frame
-    up_local = wp.vec3(0.0, 0.0, 1.0)
-    up_world = wp.transform_vector(tf, up_local)
-    # Project desired force onto drone's up axis for collective thrust
-    thrust_total = wp.dot(wp.vec3(fx, fy, fz), up_world)
+    # Clamp control force magnitude (gravity comp excluded)
+    ctrl = wp.vec3(ctrl_x, ctrl_y, ctrl_z)
+    mag = wp.length(ctrl)
+    if mag > max_force:
+        ctrl = ctrl * (max_force / mag)
 
-    # Simple mixer: distribute thrust + differential for roll/pitch
-    right_local = wp.vec3(1.0, 0.0, 0.0)
-    fwd_local = wp.vec3(0.0, 1.0, 0.0)
-    right_world = wp.transform_vector(tf, right_local)
-    fwd_world = wp.transform_vector(tf, fwd_local)
+    # Gravity compensation — ALWAYS applied in full, never clamped
+    force = wp.vec3(ctrl[0], ctrl[1], ctrl[2] + mass * gravity)
 
-    # Desired torques for roll/pitch
-    roll_torque = wp.dot(wp.vec3(fx, fy, fz), fwd_world) * arm_length
-    pitch_torque = -wp.dot(wp.vec3(fx, fy, fz), right_world) * arm_length
+    # Angular damping torque to prevent spinning
+    ang_vel = wp.vec3(
+        body_qd[body_idx][3],
+        body_qd[body_idx][4],
+        body_qd[body_idx][5],
+    )
+    torque = ang_vel * (-angular_damping)
 
-    # Normalize by max thrust to get throttle [0, 1]
-    base = thrust_total / (4.0 * max_thrust_per_prop)
-    roll_diff = roll_torque / (4.0 * max_thrust_per_prop)
-    pitch_diff = pitch_torque / (4.0 * max_thrust_per_prop)
-
-    # Prop 0: +Y, Prop 1: -Y, Prop 2: +X, Prop 3: -X
-    t0 = base + roll_diff
-    t1 = base - roll_diff
-    t2 = base + pitch_diff
-    t3 = base - pitch_diff
-
-    prop_base = world_id * 8 + prop_offset  # 8 props per world (2 drones x 4)
-    throttle_out[prop_base + 0] = wp.clamp(t0, 0.0, 1.0)
-    throttle_out[prop_base + 1] = wp.clamp(t1, 0.0, 1.0)
-    throttle_out[prop_base + 2] = wp.clamp(t2, 0.0, 1.0)
-    throttle_out[prop_base + 3] = wp.clamp(t3, 0.0, 1.0)
+    wp.atomic_add(body_f, body_idx, wp.spatial_vector(force, torque))
 
 
 @wp.kernel
@@ -309,7 +269,7 @@ def _build_drone(builder, arm_length, collision_group, label="drone"):
     body = builder.add_body(label=label)
     bar_h = arm_length * 0.05
     bar_w = arm_length * 0.05
-    density = 1750.0  # carbon fiber
+    density = 84.4  # tuned so drone mass ≈ 0.027 kg (CrazyFlie 2.1)
 
     cfg = nt.ModelBuilder.ShapeConfig(
         density=density, collision_group=collision_group
@@ -318,37 +278,6 @@ def _build_drone(builder, arm_length, collision_group, label="drone"):
     builder.add_shape_box(body, hx=arm_length, hy=bar_w, hz=bar_h, cfg=cfg)
 
     return body
-
-
-def _make_propellers(body, arm_length, fps):
-    """Create 4 propellers for a drone body."""
-    positions = [
-        wp.vec3(0.0, arm_length, 0.0),
-        wp.vec3(0.0, -arm_length, 0.0),
-        wp.vec3(arm_length, 0.0, 0.0),
-        wp.vec3(-arm_length, 0.0, 0.0),
-    ]
-    directions = [-1.0, 1.0, 1.0, -1.0]
-
-    props = []
-    for pos, td in zip(positions, directions):
-        air_density = 1.225
-        thrust_coeff = 0.109919
-        power_coeff = 0.040164
-        diameter = 0.2286
-        max_rpm = 6396.667
-        rps = max_rpm / fps
-
-        prop = Propeller()
-        prop.body = body
-        prop.pos = pos
-        prop.dir = wp.vec3(0.0, 0.0, 1.0)
-        prop.max_thrust = thrust_coeff * air_density * rps**2 * diameter**4
-        prop.max_torque = power_coeff * air_density * rps**2 * diameter**5 / wp.TAU
-        prop.turning_direction = td
-        props.append(prop)
-
-    return props
 
 
 # ------------------------------------------------------------------ #
@@ -392,55 +321,42 @@ class NewtonInterceptVecEnv(VecEnv):
         self.defender_speed_limit = 0.15 * 30.0 * (1000.0 / 3600.0)  # ~1.25 m/s
         self.attacker_speed = self.cfg.attacker_speed_scale * 0.8  # m/s
 
-        # PID gain for velocity controller (scales with mass)
-        self.kp = 5.0
+        # Force model parameters
+        self.force_kp = self.cfg.force_kp
+        self.force_kd = self.cfg.force_kd
+        self.max_force = self.cfg.max_force
+        self.angular_damping = self.cfg.angular_damping
 
         # Build scene: N worlds, each with 2 drones
         builder = nt.ModelBuilder(gravity=-self.gravity)
 
-        all_props = []
         for env_i in range(num_envs):
             builder.begin_world(label=f"world_{env_i}")
 
             # Defender (body 0 in this world)
-            def_body = _build_drone(
+            _build_drone(
                 builder, self.arm_length,
                 collision_group=env_i * 2, label=f"defender_{env_i}"
             )
-            def_props = _make_propellers(def_body, self.arm_length, self.fps)
 
             # Attacker (body 1 in this world)
-            att_body = _build_drone(
+            _build_drone(
                 builder, self.arm_length,
                 collision_group=env_i * 2 + 1, label=f"attacker_{env_i}"
             )
-            att_props = _make_propellers(att_body, self.arm_length, self.fps)
-
-            all_props.extend(def_props)
-            all_props.extend(att_props)
 
             builder.end_world()
 
         self.model = builder.finalize()
         self.bodies_per_world = 2
-        self.props_per_world = 8  # 4 per drone x 2 drones
 
         # Read actual drone mass from Newton model
         body_masses = self.model.body_mass.numpy()
         self.drone_mass = float(body_masses[0])  # first body = defender
 
-        # Max thrust per propeller (for throttle normalization)
-        self.max_thrust_per_prop = float(all_props[0].max_thrust)
-
         # States (double buffered)
         self.state_0 = self.model.state()
         self.state_1 = self.model.state()
-
-        # Propellers
-        self.props = wp.array(all_props, dtype=Propeller, device=device)
-        self.prop_controls = wp.zeros(
-            len(all_props), dtype=float, device=device
-        )
 
         # Solver
         self.solver = nt.solvers.SolverSemiImplicit(self.model)
@@ -524,64 +440,49 @@ class NewtonInterceptVecEnv(VecEnv):
             device=self.device,
         )
 
-        # Convert velocities to propeller throttles
-        # Defender (body offset 0, prop offset 0)
-        wp.launch(
-            velocity_pid_to_throttle,
-            dim=self.n_envs,
-            inputs=(
-                self.state_0.body_q,
-                self.state_0.body_qd,
-                self.defender_vel,
-                self.prop_controls,
-                self.bodies_per_world,
-                0,  # defender body offset
-                0,  # defender prop offset (first 4 props)
-                self.arm_length,
-                self.drone_mass,
-                self.gravity,
-                self.kp,
-                self.max_thrust_per_prop,
-            ),
-            device=self.device,
-        )
-
-        # Attacker (body offset 1, prop offset 4)
-        wp.launch(
-            velocity_pid_to_throttle,
-            dim=self.n_envs,
-            inputs=(
-                self.state_0.body_q,
-                self.state_0.body_qd,
-                self.attacker_vel,
-                self.prop_controls,
-                self.bodies_per_world,
-                1,  # attacker body offset
-                4,  # attacker prop offset (second 4 props)
-                self.arm_length,
-                self.drone_mass,
-                self.gravity,
-                self.kp,
-                self.max_thrust_per_prop,
-            ),
-            device=self.device,
-        )
-
-        # Physics substeps
+        # Physics substeps with direct force application
         for _ in range(self.substeps):
             self.state_0.clear_forces()
 
-            # Apply propeller forces
+            # Apply velocity-tracking forces to defender (body offset 0)
             wp.launch(
-                compute_prop_wrenches,
-                dim=len(self.props),
+                apply_velocity_force,
+                dim=self.n_envs,
                 inputs=(
-                    self.props,
-                    self.prop_controls,
                     self.state_0.body_q,
-                    self.model.body_com,
+                    self.state_0.body_qd,
+                    self.defender_vel,
+                    self.state_0.body_f,
+                    self.bodies_per_world,
+                    0,  # defender body offset
+                    self.drone_mass,
+                    self.gravity,
+                    self.force_kp,
+                    self.force_kd,
+                    self.max_force,
+                    self.angular_damping,
                 ),
-                outputs=(self.state_0.body_f,),
+                device=self.device,
+            )
+
+            # Apply velocity-tracking forces to attacker (body offset 1)
+            wp.launch(
+                apply_velocity_force,
+                dim=self.n_envs,
+                inputs=(
+                    self.state_0.body_q,
+                    self.state_0.body_qd,
+                    self.attacker_vel,
+                    self.state_0.body_f,
+                    self.bodies_per_world,
+                    1,  # attacker body offset
+                    self.drone_mass,
+                    self.gravity,
+                    self.force_kp,
+                    self.force_kd,
+                    self.max_force,
+                    self.angular_damping,
+                ),
                 device=self.device,
             )
 
