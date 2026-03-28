@@ -284,6 +284,19 @@ class DroneGame:
 
         return np.array([vx, vy, vz], dtype=np.float32)
 
+    def draw_obstacle(self, screen, pos, radius=0.15):
+        """Draw an obstacle pillar."""
+        sx, sy = self.world_to_screen(pos)
+        gx, gy = self.world_to_screen((pos[0], pos[1], 0))
+        # Pillar line from ground to top
+        pygame.draw.line(screen, (180, 100, 40), (gx, gy), (sx, sy), 3)
+        # Top marker
+        r = max(3, int(radius * self.cam_zoom * 0.3))
+        pygame.draw.circle(screen, (200, 120, 50), (sx, sy), r)
+        pygame.draw.circle(screen, (255, 160, 60), (sx, sy), r, 1)
+        # Ground circle
+        pygame.draw.circle(screen, (100, 60, 20), (gx, gy), r + 2, 1)
+
     def get_positions(self):
         """Read current drone positions from physics state."""
         wp.synchronize()
@@ -295,7 +308,16 @@ class DroneGame:
             att_pos = body_q[1][:3].tolist()
 
         target_pos = list(self.cfg.target_pos)
-        return def_pos, att_pos, target_pos
+
+        # Obstacle positions
+        obstacle_positions = []
+        num_obs = self.env._num_obstacles
+        num_drones = self.env._num_drone_bodies
+        for o in range(num_obs):
+            idx = num_drones + o
+            obstacle_positions.append(body_q[idx][:3].tolist())
+
+        return def_pos, att_pos, target_pos, obstacle_positions
 
     def run(self):
         pygame.init()
@@ -372,7 +394,7 @@ class DroneGame:
                 self.episodes += 1
 
             # Get positions
-            def_pos, att_pos, target_pos = self.get_positions()
+            def_pos, att_pos, target_pos, obstacle_positions = self.get_positions()
 
             # Update trails
             self.trail_defender.append(tuple(def_pos))
@@ -394,6 +416,10 @@ class DroneGame:
                 self.draw_trail(screen, self.trail_attacker, RED)
 
             self.draw_target(screen, target_pos)
+
+            # Draw obstacles
+            for obs_pos in obstacle_positions:
+                self.draw_obstacle(screen, obs_pos, self.cfg.obstacle_radius)
 
             if att_pos is not None:
                 self.draw_intercept_radius(screen, att_pos)

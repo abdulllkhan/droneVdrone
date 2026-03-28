@@ -96,6 +96,27 @@ python -m eval.eval_progressive --model models/best_model.zip --mode intercept -
 python -m eval.eval_progressive --model models/defender_generalist.zip --mode intercept --attacker models/adv_attacker_round2.zip --gif --episodes 50
 ```
 
+### Interactive Game (Physics Validation)
+
+```bash
+# Free flight — fly a drone with keyboard (WASD + Space/Shift)
+python -m eval.game
+
+# Watch RL models fight — best defender vs attacker
+python -m eval.game --mode watch --defender models/defender_best_generalist.zip --attacker models/adv_attacker_round1.zip
+
+# You defend — control the blue drone, RL attacker goes for target
+python -m eval.game --mode defend --attacker models/mix_attacker_round2.zip
+
+# You attack — control the red drone, RL defender tries to intercept
+python -m eval.game --mode attack --defender models/defender_best_generalist.zip
+
+# Larger arena
+python -m eval.game --mode watch --arena 12 --defender models/defender_best_generalist.zip --attacker models/adv_attacker_round2.zip
+```
+
+Controls: WASD=move, Space=up, Shift=down, Arrows=rotate camera, +/-=zoom, R=reset, Q=quit
+
 ### Monitor Training
 
 ```bash

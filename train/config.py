@@ -46,6 +46,15 @@ class EnvConfig:
     attacker_model_paths: tuple = ()  # Multiple attacker models for mixture training
     defender_model_path: str = ""  # Path to frozen defender model (evade mode)
 
+    # Obstacles
+    num_obstacles: int = 0                       # Number of obstacles per world (0 = disabled)
+    obstacle_radius: float = 0.15                # Obstacle cylinder radius (meters)
+    obstacle_height: float = 2.0                 # Obstacle cylinder half-height (meters)
+    obstacle_placement_range: float = 2.0        # Max distance from origin for obstacle placement
+    obstacle_min_spacing: float = 0.8            # Min distance between obstacles
+    obstacle_proximity_penalty: float = 2.0      # Reward penalty scale near obstacles
+    obstacle_danger_radius: float = 0.5          # Proximity penalty kicks in at this distance
+
     # Phase-specific settings
     target_randomize_range: float = 2.0   # Random target radius (fly_to_target)
     target_alt_range: tuple = (0.5, 2.0)  # Random target altitude range
@@ -70,7 +79,7 @@ class TrainConfig:
 
     # Policy network
     policy: str = "MlpPolicy"
-    net_arch: list = field(default_factory=lambda: [256, 256])
+    net_arch: list = field(default_factory=lambda: [512, 512, 256])
 
     # Logging & checkpoints
     log_dir: str = "logs"

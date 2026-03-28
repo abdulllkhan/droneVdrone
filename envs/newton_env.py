@@ -1,16 +1,27 @@
 """
 Unified GPU-Accelerated Drone Environment (Newton Physics)
 
-Supports multiple training modes with a consistent 19-dim observation
+Supports multiple training modes with a consistent observation space
 and 3-dim action space, enabling progressive training with weight transfer:
 
   fly_to_target — Single drone flies to random static targets
   chase         — Single drone chases a moving target
   intercept     — Defender vs scripted/frozen attacker (original scenario)
+  evade         — Attacker (RL) vs frozen defender
   adversarial   — Both drones are RL-controlled (future)
 
 Force model: Direct world-frame forces (no propeller simulation).
 Compatible with Stable Baselines3 via VecEnv interface.
+
+Observation (35-dim):
+  [0:3]   self pos          [3:6]   self vel
+  [6:9]   opponent/target   [9:12]  opponent/target vel
+  [12:15] relative pos      [15]    distance
+  [16:19] target/defender pos
+  [19]    closing rate       [20:23] self acceleration
+  [23:27] obstacle 0 (rel_x, rel_y, rel_z, dist)
+  [27:31] obstacle 1
+  [31:35] obstacle 2
 """
 
 import numpy as np
@@ -18,6 +29,8 @@ import warp as wp
 from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 from train.config import EnvConfig
+
+MAX_OBSTACLES = 3
 
 
 # ------------------------------------------------------------------ #
@@ -104,13 +117,15 @@ def compute_obs_kernel(
     body_q: wp.array(dtype=wp.transform),
     body_qd: wp.array(dtype=wp.spatial_vector),
     target_pos: wp.vec3,
+    prev_vel: wp.array(dtype=wp.vec3),
+    obstacle_positions: wp.array(dtype=wp.vec3, ndim=2),
+    num_obstacles: int,
     obs_out: wp.array(dtype=float, ndim=2),
     bodies_per_world: int,
     defender_offset: int,
     attacker_offset: int,
 ):
-    """Compute 19-dim observation for each world (intercept mode).
-    All values manually normalized to roughly [-1, 1]."""
+    """Compute 35-dim observation for each world (intercept mode)."""
     world_id = wp.tid()
     def_idx = world_id * bodies_per_world + defender_offset
     att_idx = world_id * bodies_per_world + attacker_offset
@@ -126,6 +141,7 @@ def compute_obs_kernel(
     vel_scale = 0.2     # 1/5.0 (max velocity)
     rel_scale = 1.0 / 6.0  # max distance ~6m
 
+    # Base 19 dims (unchanged layout)
     obs_out[world_id, 0] = def_pos[0] * pos_scale
     obs_out[world_id, 1] = def_pos[1] * pos_scale
     obs_out[world_id, 2] = def_pos[2] * pos_scale
@@ -146,6 +162,41 @@ def compute_obs_kernel(
     obs_out[world_id, 17] = target_pos[1] * pos_scale
     obs_out[world_id, 18] = target_pos[2] * pos_scale
 
+    # Closing rate (scalar)
+    closing_rate = 0.0
+    if dist > 0.01:
+        direction = rel_pos * (1.0 / dist)
+        rel_vel = def_vel - att_vel
+        closing_rate = wp.dot(rel_vel, direction)
+    obs_out[world_id, 19] = closing_rate * vel_scale
+
+    # Acceleration (change in velocity)
+    pv = prev_vel[world_id]
+    acc = def_vel - pv
+    obs_out[world_id, 20] = acc[0] * vel_scale * 5.0
+    obs_out[world_id, 21] = acc[1] * vel_scale * 5.0
+    obs_out[world_id, 22] = acc[2] * vel_scale * 5.0
+
+    # Obstacle relative positions (up to MAX_OBSTACLES=3, 4 dims each)
+    for o in range(3):
+        base = 23 + o * 4
+        if o < num_obstacles:
+            obs_pos = obstacle_positions[world_id, o]
+            obs_rel = obs_pos - def_pos
+            obs_dist = wp.length(obs_rel)
+            obs_out[world_id, base + 0] = obs_rel[0] * rel_scale
+            obs_out[world_id, base + 1] = obs_rel[1] * rel_scale
+            obs_out[world_id, base + 2] = obs_rel[2] * rel_scale
+            obs_out[world_id, base + 3] = obs_dist * rel_scale
+        else:
+            obs_out[world_id, base + 0] = 0.0
+            obs_out[world_id, base + 1] = 0.0
+            obs_out[world_id, base + 2] = 0.0
+            obs_out[world_id, base + 3] = 0.0
+
+    # Store current velocity for next step's acceleration
+    prev_vel[world_id] = def_vel
+
 
 @wp.kernel
 def compute_obs_single_drone_kernel(
@@ -153,23 +204,14 @@ def compute_obs_single_drone_kernel(
     body_qd: wp.array(dtype=wp.spatial_vector),
     target_positions: wp.array(dtype=wp.vec3),
     target_velocities: wp.array(dtype=wp.vec3),
+    prev_vel: wp.array(dtype=wp.vec3),
+    obstacle_positions: wp.array(dtype=wp.vec3, ndim=2),
+    num_obstacles: int,
     obs_out: wp.array(dtype=float, ndim=2),
     bodies_per_world: int,
     drone_offset: int,
 ):
-    """
-    Compute 19-dim observation for fly_to_target / chase modes.
-
-    Maps target info into the same slots as attacker info so weights
-    transfer seamlessly to intercept mode:
-      [0:3]   drone pos
-      [3:6]   drone vel
-      [6:9]   target pos (= attacker pos slot)
-      [9:12]  target vel (= attacker vel slot, zero for static target)
-      [12:15] relative pos (target - drone)
-      [15]    distance to target
-      [16:19] zeros (no defended target in this mode)
-    """
+    """Compute 35-dim observation for fly_to_target / chase modes."""
     world_id = wp.tid()
     body_idx = world_id * bodies_per_world + drone_offset
 
@@ -180,9 +222,9 @@ def compute_obs_single_drone_kernel(
     rel = tgt - pos
     dist = wp.length(rel)
 
-    pos_scale = 0.25    # 1/4.0 (arena bounds)
-    vel_scale = 0.2     # 1/5.0 (max velocity)
-    rel_scale = 1.0 / 6.0  # max distance ~6m
+    pos_scale = 0.25
+    vel_scale = 0.2
+    rel_scale = 1.0 / 6.0
 
     obs_out[world_id, 0] = pos[0] * pos_scale
     obs_out[world_id, 1] = pos[1] * pos_scale
@@ -204,19 +246,54 @@ def compute_obs_single_drone_kernel(
     obs_out[world_id, 17] = 0.0
     obs_out[world_id, 18] = 0.0
 
+    # Closing rate toward target
+    closing_rate = 0.0
+    if dist > 0.01:
+        direction = rel * (1.0 / dist)
+        closing_rate = wp.dot(vel - tgt_vel, direction)
+    obs_out[world_id, 19] = closing_rate * vel_scale
+
+    # Acceleration
+    pv = prev_vel[world_id]
+    acc = vel - pv
+    obs_out[world_id, 20] = acc[0] * vel_scale * 5.0
+    obs_out[world_id, 21] = acc[1] * vel_scale * 5.0
+    obs_out[world_id, 22] = acc[2] * vel_scale * 5.0
+
+    # Obstacles
+    for o in range(3):
+        base = 23 + o * 4
+        if o < num_obstacles:
+            obs_pos = obstacle_positions[world_id, o]
+            obs_rel = obs_pos - pos
+            obs_dist = wp.length(obs_rel)
+            obs_out[world_id, base + 0] = obs_rel[0] * rel_scale
+            obs_out[world_id, base + 1] = obs_rel[1] * rel_scale
+            obs_out[world_id, base + 2] = obs_rel[2] * rel_scale
+            obs_out[world_id, base + 3] = obs_dist * rel_scale
+        else:
+            obs_out[world_id, base + 0] = 0.0
+            obs_out[world_id, base + 1] = 0.0
+            obs_out[world_id, base + 2] = 0.0
+            obs_out[world_id, base + 3] = 0.0
+
+    prev_vel[world_id] = vel
+
 
 @wp.kernel
 def compute_obs_evade_kernel(
     body_q: wp.array(dtype=wp.transform),
     body_qd: wp.array(dtype=wp.spatial_vector),
     target_pos: wp.vec3,
+    prev_vel: wp.array(dtype=wp.vec3),
+    obstacle_positions: wp.array(dtype=wp.vec3, ndim=2),
+    num_obstacles: int,
     obs_out: wp.array(dtype=float, ndim=2),
     bodies_per_world: int,
     attacker_offset: int,
     defender_offset: int,
 ):
-    """Compute 19-dim observation from attacker perspective (evade mode).
-    Attacker is the RL agent, trying to reach target while avoiding defender."""
+    """Compute 35-dim observation from attacker perspective (evade mode)."""
     world_id = wp.tid()
     att_idx = world_id * bodies_per_world + attacker_offset
     def_idx = world_id * bodies_per_world + defender_offset
@@ -232,30 +309,60 @@ def compute_obs_evade_kernel(
     vel_scale = 0.2
     rel_scale = 1.0 / 6.0
 
-    # Attacker pos/vel (self)
     obs_out[world_id, 0] = att_pos[0] * pos_scale
     obs_out[world_id, 1] = att_pos[1] * pos_scale
     obs_out[world_id, 2] = att_pos[2] * pos_scale
     obs_out[world_id, 3] = att_vel[0] * vel_scale
     obs_out[world_id, 4] = att_vel[1] * vel_scale
     obs_out[world_id, 5] = att_vel[2] * vel_scale
-    # Target position (goal)
     obs_out[world_id, 6] = target_pos[0] * pos_scale
     obs_out[world_id, 7] = target_pos[1] * pos_scale
     obs_out[world_id, 8] = target_pos[2] * pos_scale
-    # Defender velocity (threat)
     obs_out[world_id, 9] = def_vel[0] * vel_scale
     obs_out[world_id, 10] = def_vel[1] * vel_scale
     obs_out[world_id, 11] = def_vel[2] * vel_scale
-    # Relative to target
     obs_out[world_id, 12] = rel_to_target[0] * rel_scale
     obs_out[world_id, 13] = rel_to_target[1] * rel_scale
     obs_out[world_id, 14] = rel_to_target[2] * rel_scale
     obs_out[world_id, 15] = dist_to_target * rel_scale
-    # Defender position
     obs_out[world_id, 16] = def_pos[0] * pos_scale
     obs_out[world_id, 17] = def_pos[1] * pos_scale
     obs_out[world_id, 18] = def_pos[2] * pos_scale
+
+    # Closing rate (defender approaching attacker)
+    rel_att_def = def_pos - att_pos
+    dist_att_def = wp.length(rel_att_def)
+    closing_rate = 0.0
+    if dist_att_def > 0.01:
+        direction = rel_att_def * (1.0 / dist_att_def)
+        closing_rate = wp.dot(def_vel - att_vel, direction)
+    obs_out[world_id, 19] = closing_rate * vel_scale
+
+    # Acceleration
+    pv = prev_vel[world_id]
+    acc = att_vel - pv
+    obs_out[world_id, 20] = acc[0] * vel_scale * 5.0
+    obs_out[world_id, 21] = acc[1] * vel_scale * 5.0
+    obs_out[world_id, 22] = acc[2] * vel_scale * 5.0
+
+    # Obstacles (relative to attacker)
+    for o in range(3):
+        base = 23 + o * 4
+        if o < num_obstacles:
+            obs_pos = obstacle_positions[world_id, o]
+            obs_rel = obs_pos - att_pos
+            obs_dist = wp.length(obs_rel)
+            obs_out[world_id, base + 0] = obs_rel[0] * rel_scale
+            obs_out[world_id, base + 1] = obs_rel[1] * rel_scale
+            obs_out[world_id, base + 2] = obs_rel[2] * rel_scale
+            obs_out[world_id, base + 3] = obs_dist * rel_scale
+        else:
+            obs_out[world_id, base + 0] = 0.0
+            obs_out[world_id, base + 1] = 0.0
+            obs_out[world_id, base + 2] = 0.0
+            obs_out[world_id, base + 3] = 0.0
+
+    prev_vel[world_id] = att_vel
 
 
 @wp.kernel
@@ -266,6 +373,10 @@ def compute_rewards_evade_kernel(
     target_pos: wp.vec3,
     intercept_dist: float,
     target_reached_dist: float,
+    obstacle_positions: wp.array(dtype=wp.vec3, ndim=2),
+    num_obstacles: int,
+    obstacle_danger_radius: float,
+    obstacle_proximity_penalty: float,
     bodies_per_world: int,
     attacker_offset: int,
     defender_offset: int,
@@ -274,7 +385,7 @@ def compute_rewards_evade_kernel(
     info_target_reached: wp.array(dtype=int),
     info_intercepted: wp.array(dtype=int),
 ):
-    """Reward for evade mode: reach target while avoiding defender."""
+    """Reward for evade mode: reach target while avoiding defender and obstacles."""
     world_id = wp.tid()
     att_idx = world_id * bodies_per_world + attacker_offset
     def_idx = world_id * bodies_per_world + defender_offset
@@ -288,27 +399,29 @@ def compute_rewards_evade_kernel(
     done = 0
 
     if dist_to_target < target_reached_dist:
-        # Attacker wins: reached the target
         reward = 200.0
         done = 1
         info_target_reached[world_id] = 1
     elif dist_to_defender < intercept_dist:
-        # Attacker loses: got intercepted
         reward = -200.0
         done = 1
         info_intercepted[world_id] = 1
     else:
         pd = prev_dist[world_id]
-        # Approach target (primary objective)
         if pd > 0.0:
             reward += (pd - dist_to_target) * 50.0
-        # Proximity bonus for being near target
         reward += 1.0 / (dist_to_target + 0.1) - 1.0 / (4.0 + 0.1)
-        # Evasion bonus: reward for keeping distance from defender
         if dist_to_defender < 1.5:
             reward -= (1.5 - dist_to_defender) * 2.0
-        # Time penalty
         reward -= 0.05
+
+        # Obstacle proximity penalty for attacker
+        for o in range(3):
+            if o < num_obstacles:
+                obs_pos = obstacle_positions[world_id, o]
+                d = wp.length(att_pos - obs_pos)
+                if d < obstacle_danger_radius:
+                    reward -= (obstacle_danger_radius - d) * obstacle_proximity_penalty
 
     rewards_out[world_id] = reward
     prev_dist[world_id] = dist_to_target
@@ -323,6 +436,10 @@ def compute_rewards_intercept_kernel(
     target_pos: wp.vec3,
     intercept_dist: float,
     target_reached_dist: float,
+    obstacle_positions: wp.array(dtype=wp.vec3, ndim=2),
+    num_obstacles: int,
+    obstacle_danger_radius: float,
+    obstacle_proximity_penalty: float,
     bodies_per_world: int,
     defender_offset: int,
     attacker_offset: int,
@@ -331,7 +448,7 @@ def compute_rewards_intercept_kernel(
     info_intercepted: wp.array(dtype=int),
     info_target_reached: wp.array(dtype=int),
 ):
-    """Reward for intercept mode v3: approach + closing speed + urgency + prediction."""
+    """Reward for intercept mode v3: approach + closing speed + urgency + obstacles."""
     world_id = wp.tid()
     def_idx = world_id * bodies_per_world + defender_offset
     att_idx = world_id * bodies_per_world + attacker_offset
@@ -357,29 +474,29 @@ def compute_rewards_intercept_kernel(
         info_target_reached[world_id] = 1
     else:
         pd = prev_dist[world_id]
-        # Strong approach reward
         if pd > 0.0:
             reward += (pd - dist) * 50.0
 
-        # Closing speed bonus: reward velocity pointing toward attacker
-        # relative_vel = def_vel - att_vel (closing velocity)
-        # closing_speed = dot(relative_vel, direction_to_attacker)
+        # Closing speed bonus
         if dist > 0.01:
             direction = to_attacker * (1.0 / dist)
             rel_vel = def_vel - att_vel
             closing_speed = wp.dot(rel_vel, direction)
-            # Reward positive closing speed (approaching), penalize opening
             reward += closing_speed * 2.0
 
-        # Proximity bonus — sharp increase as defender gets close
         reward += 1.0 / (dist + 0.1) - 1.0 / (4.0 + 0.1)
-        # Quadratic distance penalty — penalize being far
         reward -= dist * dist * 0.3
-        # Urgency: as attacker nears target, increase time pressure
         urgency = 1.0 / (att_to_target + 0.5)
         reward -= urgency * 0.5
-        # Time penalty
         reward -= 0.05
+
+        # Obstacle proximity penalty for defender
+        for o in range(3):
+            if o < num_obstacles:
+                obs_pos = obstacle_positions[world_id, o]
+                d = wp.length(def_pos - obs_pos)
+                if d < obstacle_danger_radius:
+                    reward -= (obstacle_danger_radius - d) * obstacle_proximity_penalty
 
     rewards_out[world_id] = reward
     prev_dist[world_id] = dist
@@ -394,13 +511,17 @@ def compute_rewards_navigate_kernel(
     target_positions: wp.array(dtype=wp.vec3),
     arrival_dist: float,
     arrival_bonus: float,
+    obstacle_positions: wp.array(dtype=wp.vec3, ndim=2),
+    num_obstacles: int,
+    obstacle_danger_radius: float,
+    obstacle_proximity_penalty: float,
     bodies_per_world: int,
     drone_offset: int,
     rewards_out: wp.array(dtype=float),
     dones_out: wp.array(dtype=int),
     info_arrived: wp.array(dtype=int),
 ):
-    """Reward for fly_to_target / chase: dense approach + arrival bonus."""
+    """Reward for fly_to_target / chase: dense approach + arrival bonus + obstacle avoidance."""
     world_id = wp.tid()
     body_idx = world_id * bodies_per_world + drone_offset
 
@@ -413,7 +534,6 @@ def compute_rewards_navigate_kernel(
         body_qd[body_idx][1],
         body_qd[body_idx][2],
     )
-    speed = wp.length(vel)
 
     reward = 0.0
     done = 0
@@ -423,22 +543,20 @@ def compute_rewards_navigate_kernel(
         done = 1
         info_arrived[world_id] = 1
     else:
-        # Dense approach reward — large multiplier so signal >> noise
         pd = prev_dist[world_id]
         if pd > 0.0:
             reward += (pd - dist) * 200.0
-
-        # Distance penalty — quadratic so being far is much worse
         reward -= dist * dist * 0.5
-
-        # Exponential proximity bonus — gets VERY strong near target
-        # At dist=0.5: bonus = 1/(0.5+0.1) - 1/(3+0.1) ≈ 1.37
-        # At dist=0.3: bonus = 1/(0.3+0.1) - 0.32 ≈ 2.18
-        # Pulls drone through the last 0.5m to arrival
         reward += 1.0 / (dist + 0.1) - 1.0 / (3.0 + 0.1)
-
-        # Small time penalty
         reward -= 0.05
+
+        # Obstacle proximity penalty
+        for o in range(3):
+            if o < num_obstacles:
+                obs_pos = obstacle_positions[world_id, o]
+                d = wp.length(pos - obs_pos)
+                if d < obstacle_danger_radius:
+                    reward -= (obstacle_danger_radius - d) * obstacle_proximity_penalty
 
     rewards_out[world_id] = reward
     prev_dist[world_id] = dist
@@ -454,16 +572,16 @@ def check_bounds_kernel(
     alt_min: float,
     alt_max: float,
     bodies_per_world: int,
-    num_bodies_to_check: int,
+    num_drone_bodies: int,
     dones: wp.array(dtype=int),
 ):
-    """Check truncation conditions (bounds + timeout)."""
+    """Check truncation conditions (bounds + timeout). Only checks drone bodies."""
     world_id = wp.tid()
 
     if step_count[world_id] >= max_steps:
         dones[world_id] = 1
 
-    for i in range(num_bodies_to_check):
+    for i in range(num_drone_bodies):
         body_idx = world_id * bodies_per_world + i
         pos = wp.transform_get_translation(body_q[body_idx])
         if wp.abs(pos[0]) > arena_bounds or wp.abs(pos[1]) > arena_bounds:
@@ -516,6 +634,19 @@ def _build_drone(builder, arm_length, collision_group, label="drone"):
     return body
 
 
+def _build_obstacle(builder, collision_group, radius, height, label="obstacle"):
+    """Add a static obstacle pillar. Returns body index."""
+    import newton as nt
+
+    body = builder.add_body(label=label)
+    cfg = nt.ModelBuilder.ShapeConfig(
+        density=10000.0, collision_group=collision_group
+    )
+    builder.add_shape_box(body, hx=radius, hy=radius, hz=height, cfg=cfg)
+    builder.add_joint_fixed(parent=-1, child=body)
+    return body
+
+
 # ------------------------------------------------------------------ #
 # Unified multi-mode environment
 # ------------------------------------------------------------------ #
@@ -527,11 +658,11 @@ class NewtonDroneEnv(VecEnv):
     """
     GPU-accelerated vectorized drone environment with multiple training modes.
 
-    All modes share the same 19-dim observation and 3-dim action space
-    to enable weight transfer across progressive training phases.
+    35-dim observation: 19 base + 4 dynamics (closing rate, acceleration) + 12 obstacles.
+    3-dim action: velocity commands (vx, vy, vz) in [-1, 1].
     """
 
-    OBS_DIM = 19
+    OBS_DIM = 35
     ACT_DIM = 3
 
     def __init__(self, num_envs=256, config=None, device="cuda:0"):
@@ -547,6 +678,8 @@ class NewtonDroneEnv(VecEnv):
 
         # How many drone bodies per world
         self._use_two_drones = self.mode in ("intercept", "evade", "adversarial")
+        self._num_drone_bodies = 2 if self._use_two_drones else 1
+        self._num_obstacles = min(self.cfg.num_obstacles, MAX_OBSTACLES)
 
         # Physics params
         self.fps = self.cfg.ctrl_freq
@@ -572,15 +705,25 @@ class NewtonDroneEnv(VecEnv):
 
         # Build scene
         builder = nt.ModelBuilder(gravity=-self.gravity)
-        self.bodies_per_world = 2 if self._use_two_drones else 1
+        # bodies_per_world includes drones + obstacles
+        self.bodies_per_world = self._num_drone_bodies + self._num_obstacles
 
         for env_i in range(num_envs):
             builder.begin_world(label=f"world_{env_i}")
             _build_drone(builder, self.arm_length,
-                         collision_group=env_i * 2, label=f"drone0_{env_i}")
+                         collision_group=env_i * 3, label=f"drone0_{env_i}")
             if self._use_two_drones:
                 _build_drone(builder, self.arm_length,
-                             collision_group=env_i * 2 + 1, label=f"drone1_{env_i}")
+                             collision_group=env_i * 3 + 1, label=f"drone1_{env_i}")
+            # Obstacles get a unique collision group per world (collides with both drones)
+            for obs_i in range(self._num_obstacles):
+                _build_obstacle(
+                    builder,
+                    collision_group=env_i * 3 + 2,
+                    radius=self.cfg.obstacle_radius,
+                    height=self.cfg.obstacle_height,
+                    label=f"obstacle_{env_i}_{obs_i}",
+                )
             builder.end_world()
 
         self.model = builder.finalize()
@@ -600,6 +743,14 @@ class NewtonDroneEnv(VecEnv):
         self.prev_dist_buf = wp.zeros(num_envs, dtype=float, device=device)
         self.step_count_buf = wp.zeros(num_envs, dtype=int, device=device)
 
+        # Previous velocity buffer for acceleration computation
+        self.prev_vel_buf = wp.zeros(num_envs, dtype=wp.vec3, device=device)
+
+        # Obstacle positions buffer (per-env, per-obstacle)
+        self.obstacle_pos_buf = wp.zeros(
+            (num_envs, MAX_OBSTACLES), dtype=wp.vec3, device=device
+        )
+
         # Info buffers (mode-dependent meaning)
         self.info_buf_a = wp.zeros(num_envs, dtype=int, device=device)  # intercepted / arrived
         self.info_buf_b = wp.zeros(num_envs, dtype=int, device=device)  # target_reached (intercept only)
@@ -613,7 +764,7 @@ class NewtonDroneEnv(VecEnv):
         self.target_positions = wp.zeros(num_envs, dtype=wp.vec3, device=device)
         self.target_velocities = wp.zeros(num_envs, dtype=wp.vec3, device=device)
 
-        # Initial positions buffer
+        # Initial positions buffer (drones only — obstacles positioned separately)
         self.init_pos_buf = wp.zeros(
             (num_envs, self.bodies_per_world), dtype=wp.vec3, device=device
         )
@@ -624,12 +775,10 @@ class NewtonDroneEnv(VecEnv):
         self._attacker_assignments = None  # per-env model index for mixture training
         if self.mode == "intercept":
             from stable_baselines3 import SAC
-            # Mixture of opponents: load multiple models
             if self.cfg.attacker_model_paths:
                 for path in self.cfg.attacker_model_paths:
                     print(f"  Loading attacker model: {path}")
                     self.attacker_models.append(SAC.load(path))
-                # Also include scripted pursuit as an "opponent" (None entry)
                 self.attacker_models.append(None)
                 self._attacker_assignments = np.zeros(num_envs, dtype=int)
                 self._randomize_attacker_assignments()
@@ -667,6 +816,7 @@ class NewtonDroneEnv(VecEnv):
         self._apply_init_positions(mask=None)
         self.prev_dist_buf.zero_()
         self.step_count_buf.zero_()
+        self.prev_vel_buf.zero_()
         self._randomize_attacker_assignments()
         self._compute_obs()
         return self.obs_buf.numpy().astype(np.float32)
@@ -678,7 +828,6 @@ class NewtonDroneEnv(VecEnv):
         actions = self._actions
 
         if self.mode == "evade":
-            # RL agent controls drone1 (attacker), frozen defender controls drone0
             vel_np = actions * self.defender_speed_limit
             self.drone1_vel = wp.array(
                 [wp.vec3(v[0], v[1], v[2]) for v in vel_np],
@@ -686,7 +835,6 @@ class NewtonDroneEnv(VecEnv):
             )
             self._compute_drone0_velocity_frozen()
         else:
-            # RL agent controls drone0, compute drone1 velocity
             vel_np = actions * self.defender_speed_limit
             self.drone0_vel = wp.array(
                 [wp.vec3(v[0], v[1], v[2]) for v in vel_np],
@@ -703,7 +851,7 @@ class NewtonDroneEnv(VecEnv):
         for _ in range(self.substeps):
             self.state_0.clear_forces()
 
-            # Forces on drone 0 (RL agent)
+            # Forces on drone 0
             wp.launch(
                 apply_velocity_force,
                 dim=self.n_envs,
@@ -750,7 +898,7 @@ class NewtonDroneEnv(VecEnv):
 
         self._compute_rewards()
 
-        # Check bounds/timeout
+        # Check bounds/timeout (only check drone bodies, not obstacles)
         wp.launch(
             check_bounds_kernel,
             dim=self.n_envs,
@@ -759,7 +907,7 @@ class NewtonDroneEnv(VecEnv):
                 self.max_steps, self.cfg.arena_bounds,
                 self.cfg.altitude_min, self.cfg.altitude_max,
                 self.bodies_per_world,
-                self.bodies_per_world,  # check all bodies
+                self._num_drone_bodies,
                 self.dones_buf,
             ),
             device=self.device,
@@ -780,7 +928,6 @@ class NewtonDroneEnv(VecEnv):
             if self.mode in ("fly_to_target", "chase"):
                 infos.append({"arrived": bool(info_a[i])})
             elif self.mode == "evade":
-                # In evade mode: info_a = target_reached (win), info_b = intercepted (lose)
                 infos.append({
                     "target_reached": bool(info_a[i]),
                     "intercepted": bool(info_b[i]),
@@ -812,6 +959,14 @@ class NewtonDroneEnv(VecEnv):
             prev_np[dones] = 0.0
             self.step_count_buf = wp.array(step_np, dtype=int, device=self.device)
             self.prev_dist_buf = wp.array(prev_np, dtype=float, device=self.device)
+            # Reset previous velocity for done envs
+            prev_vel_np = self.prev_vel_buf.numpy()
+            for idx in np.where(dones)[0]:
+                prev_vel_np[idx] = [0.0, 0.0, 0.0]
+            self.prev_vel_buf = wp.array(
+                [wp.vec3(float(v[0]), float(v[1]), float(v[2])) for v in prev_vel_np],
+                dtype=wp.vec3, device=self.device
+            )
             # Re-randomize attacker assignments for reset envs
             if self._attacker_assignments is not None:
                 done_indices = np.where(dones)[0]
@@ -855,7 +1010,6 @@ class NewtonDroneEnv(VecEnv):
     def _compute_drone1_velocity(self):
         """Compute velocity for the second drone (attacker)."""
         if self.attacker_models:
-            # Mixture of opponents: each env may use a different attacker
             obs = self._get_attacker_obs()
             vel_np = np.zeros((self.n_envs, 3), dtype=np.float32)
 
@@ -864,7 +1018,6 @@ class NewtonDroneEnv(VecEnv):
                 if not np.any(mask):
                     continue
                 if model is None:
-                    # Scripted pursuit — compute on GPU then read back
                     wp.launch(
                         attacker_pursuit,
                         dim=self.n_envs,
@@ -890,7 +1043,6 @@ class NewtonDroneEnv(VecEnv):
                 dtype=wp.vec3, device=self.device
             )
         elif self.attacker_model is not None:
-            # Single frozen RL attacker
             obs = self._get_attacker_obs()
             actions, _ = self.attacker_model.predict(obs, deterministic=True)
             vel_np = actions * self.defender_speed_limit
@@ -899,7 +1051,6 @@ class NewtonDroneEnv(VecEnv):
                 dtype=wp.vec3, device=self.device
             )
         else:
-            # Scripted pursuit
             wp.launch(
                 attacker_pursuit,
                 dim=self.n_envs,
@@ -914,17 +1065,29 @@ class NewtonDroneEnv(VecEnv):
 
     def _get_attacker_obs(self):
         """Build observations from the attacker's perspective (swap drone 0/1).
-        Uses same manual normalization as kernels for consistency."""
+        Detects frozen model obs dim and returns matching shape."""
         wp.synchronize()
         body_q = self.state_0.body_q.numpy()
         body_qd = self.state_0.body_qd.numpy()
         target = np.array(self.cfg.target_pos)
 
-        pos_scale = 0.25     # 1/4.0
-        vel_scale = 0.2      # 1/5.0
+        pos_scale = 0.25
+        vel_scale = 0.2
         rel_scale = 1.0 / 6.0
 
-        obs = np.zeros((self.n_envs, self.OBS_DIM), dtype=np.float32)
+        # Detect obs dim from frozen model
+        frozen_obs_dim = 19
+        if self.attacker_model is not None:
+            frozen_obs_dim = self.attacker_model.observation_space.shape[0]
+        elif self.attacker_models:
+            for m in self.attacker_models:
+                if m is not None:
+                    frozen_obs_dim = m.observation_space.shape[0]
+                    break
+
+        obs = np.zeros((self.n_envs, frozen_obs_dim), dtype=np.float32)
+        obs_pos_np = self.obstacle_pos_buf.numpy()
+
         for i in range(self.n_envs):
             att_idx = i * self.bodies_per_world + 1
             def_idx = i * self.bodies_per_world + 0
@@ -939,10 +1102,27 @@ class NewtonDroneEnv(VecEnv):
             obs[i, 0:3] = att_pos * pos_scale
             obs[i, 3:6] = att_vel * vel_scale
             obs[i, 6:9] = target * pos_scale
-            obs[i, 9:12] = 0.0  # target doesn't move
+            obs[i, 9:12] = 0.0
             obs[i, 12:15] = rel * rel_scale
             obs[i, 15] = dist * rel_scale
             obs[i, 16:19] = def_pos * pos_scale
+
+            if frozen_obs_dim >= 35:
+                # Closing rate (defender approaching attacker)
+                rel_da = def_pos - att_pos
+                dist_da = np.linalg.norm(rel_da)
+                closing = 0.0
+                if dist_da > 0.01:
+                    closing = np.dot(def_vel - att_vel, rel_da / dist_da)
+                obs[i, 19] = closing * vel_scale
+                obs[i, 20:23] = 0.0  # acceleration (not tracked for frozen models)
+                for o in range(min(self._num_obstacles, MAX_OBSTACLES)):
+                    base = 23 + o * 4
+                    opos = obs_pos_np[i][o]
+                    orel = opos - att_pos
+                    obs[i, base:base+3] = orel * rel_scale
+                    obs[i, base+3] = np.linalg.norm(orel) * rel_scale
+
         return obs
 
     def _compute_drone0_velocity_frozen(self):
@@ -958,7 +1138,7 @@ class NewtonDroneEnv(VecEnv):
 
     def _get_defender_obs(self):
         """Build observations from defender's perspective for frozen defender.
-        Same format as compute_obs_kernel: defender=drone0, attacker=drone1."""
+        Detects frozen model obs dim and returns matching shape."""
         wp.synchronize()
         body_q = self.state_0.body_q.numpy()
         body_qd = self.state_0.body_qd.numpy()
@@ -968,7 +1148,13 @@ class NewtonDroneEnv(VecEnv):
         vel_scale = 0.2
         rel_scale = 1.0 / 6.0
 
-        obs = np.zeros((self.n_envs, self.OBS_DIM), dtype=np.float32)
+        frozen_obs_dim = 19
+        if self.defender_model is not None:
+            frozen_obs_dim = self.defender_model.observation_space.shape[0]
+
+        obs = np.zeros((self.n_envs, frozen_obs_dim), dtype=np.float32)
+        obs_pos_np = self.obstacle_pos_buf.numpy()
+
         for i in range(self.n_envs):
             def_idx = i * self.bodies_per_world + 0
             att_idx = i * self.bodies_per_world + 1
@@ -987,6 +1173,20 @@ class NewtonDroneEnv(VecEnv):
             obs[i, 12:15] = rel * rel_scale
             obs[i, 15] = dist * rel_scale
             obs[i, 16:19] = target * pos_scale
+
+            if frozen_obs_dim >= 35:
+                closing = 0.0
+                if dist > 0.01:
+                    closing = np.dot(def_vel - att_vel, rel / dist)
+                obs[i, 19] = closing * vel_scale
+                obs[i, 20:23] = 0.0
+                for o in range(min(self._num_obstacles, MAX_OBSTACLES)):
+                    base = 23 + o * 4
+                    opos = obs_pos_np[i][o]
+                    orel = opos - def_pos
+                    obs[i, base:base+3] = orel * rel_scale
+                    obs[i, base+3] = np.linalg.norm(orel) * rel_scale
+
         return obs
 
     def _update_moving_targets(self):
@@ -995,11 +1195,10 @@ class NewtonDroneEnv(VecEnv):
         vel_np = self.target_velocities.numpy()
         tgt_np += vel_np * self.dt
 
-        # Bounce off arena bounds
-        bounds = self.cfg.arena_bounds * 0.8  # stay inside
+        bounds = self.cfg.arena_bounds * 0.8
         alt_lo, alt_hi = self.cfg.target_alt_range
         for i in range(self.n_envs):
-            for ax in range(2):  # x, y
+            for ax in range(2):
                 if abs(tgt_np[i][ax]) > bounds:
                     vel_np[i][ax] *= -1.0
                     tgt_np[i][ax] = np.clip(tgt_np[i][ax], -bounds, bounds)
@@ -1025,6 +1224,8 @@ class NewtonDroneEnv(VecEnv):
                 inputs=(
                     self.state_0.body_q, self.state_0.body_qd,
                     self.target_positions, self.target_velocities,
+                    self.prev_vel_buf,
+                    self.obstacle_pos_buf, self._num_obstacles,
                     self.obs_buf,
                     self.bodies_per_world, 0,
                 ),
@@ -1036,8 +1237,11 @@ class NewtonDroneEnv(VecEnv):
                 dim=self.n_envs,
                 inputs=(
                     self.state_0.body_q, self.state_0.body_qd,
-                    self.target_pos_wp, self.obs_buf,
-                    self.bodies_per_world, 1, 0,  # attacker=1, defender=0
+                    self.target_pos_wp,
+                    self.prev_vel_buf,
+                    self.obstacle_pos_buf, self._num_obstacles,
+                    self.obs_buf,
+                    self.bodies_per_world, 1, 0,
                 ),
                 device=self.device,
             )
@@ -1047,7 +1251,10 @@ class NewtonDroneEnv(VecEnv):
                 dim=self.n_envs,
                 inputs=(
                     self.state_0.body_q, self.state_0.body_qd,
-                    self.target_pos_wp, self.obs_buf,
+                    self.target_pos_wp,
+                    self.prev_vel_buf,
+                    self.obstacle_pos_buf, self._num_obstacles,
+                    self.obs_buf,
                     self.bodies_per_world, 0, 1,
                 ),
                 device=self.device,
@@ -1065,6 +1272,9 @@ class NewtonDroneEnv(VecEnv):
                     self.target_positions,
                     self.cfg.arrival_dist,
                     self.cfg.arrival_bonus,
+                    self.obstacle_pos_buf, self._num_obstacles,
+                    self.cfg.obstacle_danger_radius,
+                    self.cfg.obstacle_proximity_penalty,
                     self.bodies_per_world, 0,
                     self.rewards_buf, self.term_buf,
                     self.info_buf_a,
@@ -1081,7 +1291,10 @@ class NewtonDroneEnv(VecEnv):
                     self.target_pos_wp,
                     self.cfg.intercept_dist,
                     self.cfg.target_reached_dist,
-                    self.bodies_per_world, 1, 0,  # attacker=1, defender=0
+                    self.obstacle_pos_buf, self._num_obstacles,
+                    self.cfg.obstacle_danger_radius,
+                    self.cfg.obstacle_proximity_penalty,
+                    self.bodies_per_world, 1, 0,
                     self.rewards_buf, self.term_buf,
                     self.info_buf_a, self.info_buf_b,
                 ),
@@ -1097,6 +1310,9 @@ class NewtonDroneEnv(VecEnv):
                     self.target_pos_wp,
                     self.cfg.intercept_dist,
                     self.cfg.target_reached_dist,
+                    self.obstacle_pos_buf, self._num_obstacles,
+                    self.cfg.obstacle_danger_radius,
+                    self.cfg.obstacle_proximity_penalty,
                     self.bodies_per_world, 0, 1,
                     self.rewards_buf, self.term_buf,
                     self.info_buf_a, self.info_buf_b,
@@ -1117,6 +1333,9 @@ class NewtonDroneEnv(VecEnv):
         else:
             self._randomize_intercept_positions(rng, range(self.n_envs))
 
+        if self._num_obstacles > 0:
+            self._randomize_obstacle_positions(rng, range(self.n_envs))
+
     def _randomize_masked(self, mask):
         """Randomize positions only for done environments."""
         rng = np.random.default_rng()
@@ -1127,6 +1346,57 @@ class NewtonDroneEnv(VecEnv):
         else:
             self._randomize_intercept_positions(rng, indices)
 
+        if self._num_obstacles > 0:
+            self._randomize_obstacle_positions(rng, indices)
+
+    def _randomize_obstacle_positions(self, rng, indices):
+        """Place obstacles at random positions within the arena, respecting min spacing."""
+        obs_np = self.obstacle_pos_buf.numpy()
+        positions = self.init_pos_buf.numpy()
+
+        for i in indices:
+            placed = []
+            for o in range(self._num_obstacles):
+                for _attempt in range(50):
+                    angle = rng.uniform(0, 2 * np.pi)
+                    dist = rng.uniform(0.5, self.cfg.obstacle_placement_range)
+                    ox = dist * np.cos(angle)
+                    oy = dist * np.sin(angle)
+                    oz = self.cfg.obstacle_height  # center of pillar
+
+                    # Check spacing from other obstacles
+                    ok = True
+                    for px, py, _ in placed:
+                        if np.sqrt((ox - px) ** 2 + (oy - py) ** 2) < self.cfg.obstacle_min_spacing:
+                            ok = False
+                            break
+                    if ok:
+                        placed.append((ox, oy, oz))
+                        break
+                else:
+                    # Fallback: place anyway
+                    placed.append((ox, oy, oz))
+
+                obs_np[i][o] = [placed[-1][0], placed[-1][1], placed[-1][2]]
+                # Also set in init_pos_buf for obstacle bodies
+                obs_body_idx = self._num_drone_bodies + o
+                positions[i, obs_body_idx] = [placed[-1][0], placed[-1][1], placed[-1][2]]
+
+        self.obstacle_pos_buf = wp.array(
+            [[wp.vec3(float(obs_np[i][o][0]), float(obs_np[i][o][1]), float(obs_np[i][o][2]))
+              for o in range(MAX_OBSTACLES)]
+             for i in range(self.n_envs)],
+            dtype=wp.vec3, device=self.device
+        )
+        self.init_pos_buf = wp.array(
+            [[wp.vec3(float(positions[i, j, 0]),
+                      float(positions[i, j, 1]),
+                      float(positions[i, j, 2]))
+              for j in range(self.bodies_per_world)]
+             for i in range(self.n_envs)],
+            dtype=wp.vec3, device=self.device
+        )
+
     def _randomize_single_drone_positions(self, rng, indices):
         """Randomize drone + target positions for fly_to_target / chase."""
         positions = self.init_pos_buf.numpy()
@@ -1134,7 +1404,6 @@ class NewtonDroneEnv(VecEnv):
         vel_np = self.target_velocities.numpy()
 
         for i in indices:
-            # Drone starts near origin at random altitude
             angle = rng.uniform(0, 2 * np.pi)
             dist = rng.uniform(0.3, 1.0)
             positions[i, 0] = [
@@ -1143,7 +1412,6 @@ class NewtonDroneEnv(VecEnv):
                 rng.uniform(*self.cfg.defender_alt_range),
             ]
 
-            # Target at random position in arena
             t_angle = rng.uniform(0, 2 * np.pi)
             t_dist = rng.uniform(1.0, self.cfg.target_randomize_range)
             tgt_np[i] = [
@@ -1152,7 +1420,6 @@ class NewtonDroneEnv(VecEnv):
                 rng.uniform(*self.cfg.target_alt_range),
             ]
 
-            # Moving target velocity (chase mode only)
             if self.mode == "chase":
                 v_angle = rng.uniform(0, 2 * np.pi)
                 v_alt = rng.uniform(-0.3, 0.3)
@@ -1190,7 +1457,6 @@ class NewtonDroneEnv(VecEnv):
         target = np.array(self.cfg.target_pos)
 
         for i in indices:
-            # Defender near target
             angle = rng.uniform(0, 2 * np.pi)
             dist = rng.uniform(*self.cfg.defender_dist_range)
             positions[i, 0] = [
@@ -1198,7 +1464,6 @@ class NewtonDroneEnv(VecEnv):
                 target[1] + dist * np.sin(angle),
                 rng.uniform(*self.cfg.defender_alt_range),
             ]
-            # Attacker far from target
             angle = rng.uniform(0, 2 * np.pi)
             dist = rng.uniform(*self.cfg.attacker_dist_range)
             positions[i, 1] = [
