@@ -22,11 +22,19 @@ from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import (
     CheckpointCallback,
     EvalCallback,
+    StopTrainingOnNoModelImprovement,
 )
 from stable_baselines3.common.vec_env import VecNormalize
 
 from envs.newton_env import NewtonDroneEnv
 from train.config import TrainConfig, EnvConfig
+
+
+def linear_schedule(initial_value):
+    """Linear decay from initial_value to 10% of initial_value."""
+    def func(progress_remaining):
+        return max(0.1, progress_remaining) * initial_value
+    return func
 
 
 def make_env(mode, num_envs, attacker_model_path="", **env_overrides):
@@ -56,7 +64,7 @@ def make_model(env, train_cfg, resume_path=None):
     return SAC(
         train_cfg.policy,
         env,
-        learning_rate=train_cfg.learning_rate,
+        learning_rate=linear_schedule(train_cfg.learning_rate),
         batch_size=train_cfg.batch_size,
         buffer_size=train_cfg.buffer_size,
         learning_starts=train_cfg.learning_starts,
@@ -113,6 +121,12 @@ def train_phase(phase_name, mode, timesteps, num_envs, train_cfg,
         save_path=train_cfg.model_dir,
         name_prefix=prefix,
     )
+    # Stop if no improvement for 100 consecutive evaluations (~500K steps)
+    stop_cb = StopTrainingOnNoModelImprovement(
+        max_no_improvement_evals=100,
+        min_evals=40,
+        verbose=1,
+    )
     eval_cb = EvalCallback(
         eval_env,
         best_model_save_path=train_cfg.model_dir,
@@ -120,6 +134,7 @@ def train_phase(phase_name, mode, timesteps, num_envs, train_cfg,
         eval_freq=max(train_cfg.eval_freq // num_envs, 1),
         n_eval_episodes=train_cfg.eval_episodes,
         deterministic=True,
+        callback_after_eval=stop_cb,
     )
 
     # Model
@@ -143,7 +158,7 @@ def train_phase(phase_name, mode, timesteps, num_envs, train_cfg,
     train_env.close()
     eval_env.close()
 
-    return f"{save_path}.zip"
+    return save_path  # SB3 .load() auto-appends .zip
 
 
 def run(args):

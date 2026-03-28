@@ -43,12 +43,14 @@ class EnvConfig:
     # Training mode (for progressive training)
     mode: str = "intercept"        # "fly_to_target", "chase", "intercept", "adversarial"
     attacker_model_path: str = ""  # Path to frozen attacker model (intercept mode)
+    attacker_model_paths: tuple = ()  # Multiple attacker models for mixture training
+    defender_model_path: str = ""  # Path to frozen defender model (evade mode)
 
     # Phase-specific settings
     target_randomize_range: float = 2.0   # Random target radius (fly_to_target)
     target_alt_range: tuple = (0.5, 2.0)  # Random target altitude range
-    arrival_dist: float = 0.3             # Arrival threshold (fly_to_target/chase)
-    arrival_bonus: float = 200.0          # Reward for reaching target
+    arrival_dist: float = 0.5             # Arrival threshold (fly_to_target/chase) — matches intercept_dist
+    arrival_bonus: float = 500.0          # Large reward for reaching target (must dominate dense rewards)
     moving_target_speed: float = 0.5      # Target speed (chase mode, m/s)
 
 
@@ -80,8 +82,8 @@ class TrainConfig:
 
     # Environment
     n_envs: int = 16              # Parallel training environments
-    normalize_obs: bool = True
-    normalize_reward: bool = True
+    normalize_obs: bool = False
+    normalize_reward: bool = False
 
     # Seed
     seed: int = 42

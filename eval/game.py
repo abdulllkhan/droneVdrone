@@ -1,425 +1,445 @@
 """
-Game Mode — fly drones with Xbox controller or keyboard in PyBullet GUI.
+Interactive drone game — validate physics before RL training.
 
 Modes:
-    free_flight  — One drone, no combat. Validate physics feel.
-    attack       — You (Xbox) are the attacker, RL/random defends.
-    defend       — You (Xbox) are the defender, scripted attacker.
+  free      — Fly one drone around with keyboard. No combat.
+  defend    — You control defender (blue), RL attacker (red) goes for target (green).
+  attack    — You control attacker (red), RL defender (blue) tries to intercept.
+  watch     — RL defender vs RL attacker. Just observe.
+
+Controls:
+  WASD      — Horizontal movement (forward/back/left/right)
+  Space     — Ascend
+  LShift    — Descend
+  R         — Reset episode
+  Q / ESC   — Quit
+  +/-       — Zoom in/out
+  Arrow keys — Rotate camera
 
 Usage:
-    python -m eval.game --mode free_flight
-    python -m eval.game --mode free_flight --keyboard
-    python -m eval.game --mode attack --model models/best_model.zip
-    python -m eval.game --mode defend --model models/best_model.zip
+  python -m eval.game                                          # free flight
+  python -m eval.game --mode watch --defender models/best_model.zip --attacker models/adv_attacker_round1.zip
+  python -m eval.game --mode defend --attacker models/mix_attacker_round2.zip
+  python -m eval.game --mode attack --defender models/defender_best_generalist.zip
 """
 
 import argparse
-import time
-import os
+import math
+import sys
 
 import numpy as np
-import pybullet as p
-from gym_pybullet_drones.envs.BaseAviary import BaseAviary
-from gym_pybullet_drones.utils.enums import DroneModel, Physics
-from gym_pybullet_drones.control.DSLPIDControl import DSLPIDControl
+import pygame
+import warp as wp
+from stable_baselines3 import SAC
 
+from envs.newton_env import NewtonDroneEnv
 from train.config import EnvConfig
 
 
-# PyBullet key codes
-KEY_W = ord('w')
-KEY_A = ord('a')
-KEY_S = ord('s')
-KEY_D = ord('d')
-KEY_R = ord('r')
-KEY_SPACE = 32
-KEY_SHIFT = 65306
-KEY_ESC = 27
+# Colors
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+GRAY = (40, 40, 40)
+DARK_GRAY = (25, 25, 25)
+BLUE = (60, 140, 255)       # Defender
+RED = (255, 70, 70)         # Attacker
+GREEN = (70, 255, 70)       # Target
+YELLOW = (255, 255, 80)     # Trail
+CYAN = (80, 220, 255)       # Info text
+GRID_COLOR = (30, 30, 30)
 
 
-class GameEnv(BaseAviary):
-    """PyBullet environment for interactive game modes."""
+class DroneGame:
+    def __init__(self, mode="free", defender_path=None, attacker_path=None,
+                 arena_size=8.0):
+        self.mode = mode
+        self.arena_size = arena_size
+        self.screen_w, self.screen_h = 1200, 800
 
-    def __init__(self, mode="free_flight", config=None):
-        self.cfg = config or EnvConfig()
-        self.game_mode = mode
-        self.target_pos = np.array(self.cfg.target_pos, dtype=np.float32)
+        # Camera
+        self.cam_azimuth = 45.0   # degrees
+        self.cam_elevation = 35.0
+        self.cam_zoom = 80.0      # pixels per meter
 
-        num_drones = 1 if mode == "free_flight" else 2
+        # Physics env (1 environment only)
+        use_two = mode in ("defend", "attack", "watch")
+        env_mode = "intercept" if use_two else "fly_to_target"
 
-        if mode == "free_flight":
-            init_xyzs = np.array([[0.0, 0.0, 1.0]])
-        elif mode == "attack":
-            init_xyzs = np.array([
-                [0.0, 0.5, 1.0],    # Defender (AI)
-                [2.5, 0.0, 1.0],    # Attacker (human)
-            ])
-        else:  # defend
-            init_xyzs = np.array([
-                [0.0, 0.5, 1.0],    # Defender (human)
-                [2.5, 0.0, 1.0],    # Attacker (scripted)
-            ])
+        cfg_kwargs = {
+            "mode": env_mode,
+            "arena_bounds": arena_size,
+            "episode_secs": 30.0,
+        }
+        if use_two and attacker_path:
+            cfg_kwargs["attacker_model_path"] = attacker_path
 
-        super().__init__(
-            drone_model=DroneModel.CF2X,
-            num_drones=num_drones,
-            initial_xyzs=init_xyzs,
-            initial_rpys=np.zeros((num_drones, 3)),
-            physics=Physics.PYB_GND_DRAG_DW,
-            pyb_freq=self.cfg.pyb_freq,
-            ctrl_freq=self.cfg.ctrl_freq,
-            gui=True,
-            record=False,
-            obstacles=False,
-            user_debug_gui=True,
+        self.cfg = EnvConfig(**cfg_kwargs)
+        self.env = NewtonDroneEnv(num_envs=1, config=self.cfg)
+
+        # Load RL models
+        self.defender_model = None
+        self.attacker_model = None
+        if defender_path and mode in ("attack", "watch"):
+            self.defender_model = SAC.load(defender_path)
+        if attacker_path and mode in ("defend", "watch"):
+            self.attacker_model = SAC.load(attacker_path)
+
+        self.use_two = use_two
+        self.bodies_per_world = self.env.bodies_per_world
+
+        # Trail history
+        self.trail_defender = []
+        self.trail_attacker = []
+        self.max_trail = 500
+
+        # Stats
+        self.episode_steps = 0
+        self.episodes = 0
+        self.interceptions = 0
+        self.target_reached = 0
+
+    def world_to_screen(self, pos3d):
+        """Project 3D position to 2D screen using isometric-like view."""
+        x, y, z = pos3d
+        az = math.radians(self.cam_azimuth)
+        el = math.radians(self.cam_elevation)
+
+        # Rotate around Z axis (azimuth)
+        rx = x * math.cos(az) - y * math.sin(az)
+        ry = x * math.sin(az) + y * math.cos(az)
+
+        # Project with elevation
+        sx = rx * self.cam_zoom
+        sy = (-ry * math.sin(el) - z * math.cos(el)) * self.cam_zoom
+
+        # Center on screen
+        return (
+            int(self.screen_w // 2 + sx),
+            int(self.screen_h // 2 + sy),
         )
 
-        # PID controllers
-        self.controllers = [
-            DSLPIDControl(drone_model=DroneModel.CF2X)
-            for _ in range(num_drones)
+    def draw_grid(self, screen):
+        """Draw ground plane grid."""
+        step = 1.0
+        n = int(self.arena_size)
+        for i in range(-n, n + 1):
+            p1 = self.world_to_screen((i * step, -n * step, 0))
+            p2 = self.world_to_screen((i * step, n * step, 0))
+            pygame.draw.line(screen, GRID_COLOR, p1, p2, 1)
+            p1 = self.world_to_screen((-n * step, i * step, 0))
+            p2 = self.world_to_screen((n * step, i * step, 0))
+            pygame.draw.line(screen, GRID_COLOR, p1, p2, 1)
+
+    def draw_axes(self, screen):
+        """Draw XYZ axes at origin."""
+        origin = self.world_to_screen((0, 0, 0))
+        for axis, color, label in [
+            ((1, 0, 0), RED, "X"),
+            ((0, 1, 0), GREEN, "Y"),
+            ((0, 0, 1), BLUE, "Z"),
+        ]:
+            end = self.world_to_screen(axis)
+            pygame.draw.line(screen, color, origin, end, 2)
+
+    def draw_drone(self, screen, pos, color, label, size=10):
+        """Draw a drone as a diamond with altitude line."""
+        sx, sy = self.world_to_screen(pos)
+
+        # Ground shadow
+        gx, gy = self.world_to_screen((pos[0], pos[1], 0))
+        pygame.draw.line(screen, (color[0]//3, color[1]//3, color[2]//3),
+                         (sx, sy), (gx, gy), 1)
+        pygame.draw.circle(screen, (color[0]//3, color[1]//3, color[2]//3),
+                           (gx, gy), 3)
+
+        # Drone body (diamond shape)
+        points = [
+            (sx, sy - size),
+            (sx + size, sy),
+            (sx, sy + size),
+            (sx - size, sy),
+        ]
+        pygame.draw.polygon(screen, color, points)
+        pygame.draw.polygon(screen, WHITE, points, 1)
+
+        # Label
+        font = pygame.font.SysFont("monospace", 12)
+        text = font.render(f"{label} ({pos[2]:.1f}m)", True, color)
+        screen.blit(text, (sx + size + 4, sy - 8))
+
+    def draw_target(self, screen, pos):
+        """Draw target as a pulsating star."""
+        sx, sy = self.world_to_screen(pos)
+        pulse = 8 + 3 * math.sin(pygame.time.get_ticks() / 200.0)
+        size = int(pulse)
+
+        for i in range(5):
+            angle = math.radians(i * 72 - 90)
+            ex = sx + int(size * 1.5 * math.cos(angle))
+            ey = sy + int(size * 1.5 * math.sin(angle))
+            pygame.draw.line(screen, GREEN, (sx, sy), (ex, ey), 2)
+
+        pygame.draw.circle(screen, GREEN, (sx, sy), size // 2)
+
+        # Ground marker
+        gx, gy = self.world_to_screen((pos[0], pos[1], 0))
+        pygame.draw.circle(screen, (0, 80, 0), (gx, gy), 4, 1)
+
+    def draw_trail(self, screen, trail, color):
+        """Draw fading trail."""
+        n = len(trail)
+        if n < 2:
+            return
+        for i in range(1, n):
+            alpha = i / n
+            c = (int(color[0] * alpha * 0.5),
+                 int(color[1] * alpha * 0.5),
+                 int(color[2] * alpha * 0.5))
+            p1 = self.world_to_screen(trail[i - 1])
+            p2 = self.world_to_screen(trail[i])
+            pygame.draw.line(screen, c, p1, p2, 1)
+
+    def draw_hud(self, screen, def_pos, att_pos, target_pos):
+        """Draw heads-up display with game info."""
+        font = pygame.font.SysFont("monospace", 14)
+        y = 10
+        lines = [
+            (f"Mode: {self.mode.upper()}", CYAN),
+            (f"Episode: {self.episodes}  Steps: {self.episode_steps}", WHITE),
+            (f"Interceptions: {self.interceptions}  Target reached: {self.target_reached}", WHITE),
+            ("", WHITE),
         ]
 
-        # PID targets (position-based control)
-        self.pid_targets = init_xyzs.copy()
-        self.move_speed = 0.05  # meters per control step
+        if def_pos is not None:
+            lines.append((f"Defender: ({def_pos[0]:+.2f}, {def_pos[1]:+.2f}, {def_pos[2]:.2f})", BLUE))
+        if att_pos is not None:
+            lines.append((f"Attacker: ({att_pos[0]:+.2f}, {att_pos[1]:+.2f}, {att_pos[2]:.2f})", RED))
+        if target_pos is not None:
+            lines.append((f"Target:   ({target_pos[0]:+.2f}, {target_pos[1]:+.2f}, {target_pos[2]:.2f})", GREEN))
 
-        self.max_step_counter = int(self.cfg.episode_secs * self.cfg.pyb_freq)
+        if def_pos is not None and att_pos is not None:
+            dist = np.linalg.norm(np.array(def_pos) - np.array(att_pos))
+            lines.append((f"Def-Att dist: {dist:.2f}m", YELLOW))
+        if att_pos is not None and target_pos is not None:
+            dist = np.linalg.norm(np.array(att_pos) - np.array(target_pos))
+            lines.append((f"Att-Target dist: {dist:.2f}m", YELLOW))
 
-        # Score tracking
-        self.score = {"human": 0, "ai": 0, "timeout": 0}
+        lines.append(("", WHITE))
+        lines.append(("WASD=move  Space/Shift=up/down  R=reset  Q=quit", GRAY))
+        lines.append(("Arrows=rotate camera  +/-=zoom", GRAY))
 
-        # Draw target and arena markers
-        if mode != "free_flight":
-            self._draw_target()
-        self._draw_arena()
+        for text, color in lines:
+            surf = font.render(text, True, color)
+            screen.blit(surf, (10, y))
+            y += 18
 
-    def _actionSpace(self):
-        from gymnasium import spaces
-        return spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
+    def draw_arena_bounds(self, screen):
+        """Draw arena boundary on ground."""
+        b = self.arena_size
+        corners = [(-b, -b, 0), (b, -b, 0), (b, b, 0), (-b, b, 0)]
+        for i in range(4):
+            p1 = self.world_to_screen(corners[i])
+            p2 = self.world_to_screen(corners[(i + 1) % 4])
+            pygame.draw.line(screen, (60, 0, 0), p1, p2, 1)
 
-    def _observationSpace(self):
-        from gymnasium import spaces
-        obs_dim = 6 if self.game_mode == "free_flight" else 19
-        return spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
+    def draw_intercept_radius(self, screen, pos):
+        """Draw interception threshold circle around a position."""
+        r = self.cfg.intercept_dist
+        n_pts = 20
+        points = []
+        for i in range(n_pts + 1):
+            angle = 2 * math.pi * i / n_pts
+            p = (pos[0] + r * math.cos(angle),
+                 pos[1] + r * math.sin(angle),
+                 pos[2])
+            points.append(self.world_to_screen(p))
+        if len(points) > 1:
+            pygame.draw.lines(screen, (80, 80, 0), False, points, 1)
 
-    def _computeObs(self):
-        state0 = self._getDroneStateVector(0)
-
-        if self.game_mode == "free_flight":
-            return np.concatenate([state0[0:3], state0[10:13]]).astype(np.float32)
-
-        state1 = self._getDroneStateVector(1)
-        def_pos = state0[0:3]
-        def_vel = state0[10:13]
-        att_pos = state1[0:3]
-        att_vel = state1[10:13]
-        rel_pos = att_pos - def_pos
-        dist = np.array([np.linalg.norm(rel_pos)])
-        return np.concatenate([
-            def_pos, def_vel, att_pos, att_vel,
-            rel_pos, dist, self.target_pos,
-        ]).astype(np.float32)
-
-    def _preprocessAction(self, action):
-        # Action is not used — we drive RPMs directly from apply_input()
-        rpms = np.zeros((self.NUM_DRONES, 4))
-        for i in range(self.NUM_DRONES):
-            state = self._getDroneStateVector(i)
-            rpms[i], _, _ = self.controllers[i].computeControlFromState(
-                control_timestep=self.CTRL_TIMESTEP,
-                state=state,
-                target_pos=self.pid_targets[i],
-                target_rpy=np.zeros(3),
-            )
-        return rpms
-
-    def apply_input(self, drone_idx, velocity):
-        """Apply velocity command to a drone's PID target.
-
-        Args:
-            drone_idx: which drone to control
-            velocity: (vx, vy, vz) in [-1, 1]
-        """
-        self.pid_targets[drone_idx] += velocity * self.move_speed
-        # Clamp within arena
-        self.pid_targets[drone_idx] = np.clip(
-            self.pid_targets[drone_idx],
-            [-self.cfg.arena_bounds, -self.cfg.arena_bounds, self.cfg.altitude_min + 0.1],
-            [self.cfg.arena_bounds, self.cfg.arena_bounds, self.cfg.altitude_max],
-        )
-
-    def get_keyboard_velocity(self):
-        """Read keyboard and return (vx, vy, vz) in [-1, 1]."""
-        keys = p.getKeyboardEvents(physicsClientId=self.CLIENT)
+    def get_keyboard_velocity(self, keys):
+        """Convert keyboard input to velocity vector."""
         vx, vy, vz = 0.0, 0.0, 0.0
+        speed = 1.0
 
-        if KEY_W in keys and keys[KEY_W] & p.KEY_IS_DOWN:
-            vx = -1.0
-        if KEY_S in keys and keys[KEY_S] & p.KEY_IS_DOWN:
-            vx = 1.0
-        if KEY_A in keys and keys[KEY_A] & p.KEY_IS_DOWN:
-            vy = 1.0
-        if KEY_D in keys and keys[KEY_D] & p.KEY_IS_DOWN:
-            vy = -1.0
-        if KEY_SPACE in keys and keys[KEY_SPACE] & p.KEY_IS_DOWN:
-            vz = 1.0
-        if KEY_SHIFT in keys and keys[KEY_SHIFT] & p.KEY_IS_DOWN:
-            vz = -1.0
+        az = math.radians(self.cam_azimuth)
+        fwd_x, fwd_y = -math.sin(az), -math.cos(az)
+        right_x, right_y = math.cos(az), -math.sin(az)
+
+        if keys[pygame.K_w]:
+            vx += fwd_x * speed
+            vy += fwd_y * speed
+        if keys[pygame.K_s]:
+            vx -= fwd_x * speed
+            vy -= fwd_y * speed
+        if keys[pygame.K_a]:
+            vx -= right_x * speed
+            vy -= right_y * speed
+        if keys[pygame.K_d]:
+            vx += right_x * speed
+            vy += right_y * speed
+        if keys[pygame.K_SPACE]:
+            vz += speed
+        if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]:
+            vz -= speed
 
         return np.array([vx, vy, vz], dtype=np.float32)
 
-    def check_special_keys(self):
-        """Check for reset/quit. Returns 'reset', 'quit', or None."""
-        keys = p.getKeyboardEvents(physicsClientId=self.CLIENT)
-        if KEY_ESC in keys and keys[KEY_ESC] & p.KEY_WAS_TRIGGERED:
-            return "quit"
-        if KEY_R in keys and keys[KEY_R] & p.KEY_WAS_TRIGGERED:
-            return "reset"
-        return None
+    def get_positions(self):
+        """Read current drone positions from physics state."""
+        wp.synchronize()
+        body_q = self.env.state_0.body_q.numpy()
 
-    def get_status(self):
-        """Get current game status dict."""
-        if self.game_mode == "free_flight":
-            state = self._getDroneStateVector(0)
-            return {
-                "pos": state[0:3],
-                "vel": state[10:13],
-                "alt": state[2],
-            }
+        def_pos = body_q[0][:3].tolist()
+        att_pos = None
+        if self.use_two:
+            att_pos = body_q[1][:3].tolist()
 
-        state0 = self._getDroneStateVector(0)
-        state1 = self._getDroneStateVector(1)
-        drone_dist = np.linalg.norm(state0[0:3] - state1[0:3])
-        att_to_target = np.linalg.norm(state1[0:3] - self.target_pos)
-        return {
-            "drone_dist": drone_dist,
-            "att_to_target": att_to_target,
-            "intercepted": drone_dist < self.cfg.intercept_dist,
-            "target_reached": att_to_target < self.cfg.target_reached_dist,
-        }
+        target_pos = list(self.cfg.target_pos)
+        return def_pos, att_pos, target_pos
 
-    def _computeReward(self):
-        return 0.0
+    def run(self):
+        pygame.init()
+        screen = pygame.display.set_mode((self.screen_w, self.screen_h))
+        pygame.display.set_caption(f"DroneVDrone — {self.mode.upper()}")
+        clock = pygame.time.Clock()
 
-    def _computeTerminated(self):
-        if self.game_mode == "free_flight":
-            return False
-        status = self.get_status()
-        return status["intercepted"] or status["target_reached"]
+        obs = self.env.reset()
+        self.episodes = 1
+        running = True
 
-    def _computeTruncated(self):
-        if self.step_counter >= self.max_step_counter:
-            return True
-        return False
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                if event.type == pygame.KEYDOWN:
+                    if event.key in (pygame.K_q, pygame.K_ESCAPE):
+                        running = False
+                    if event.key == pygame.K_r:
+                        obs = self.env.reset()
+                        self.trail_defender.clear()
+                        self.trail_attacker.clear()
+                        self.episode_steps = 0
+                        self.episodes += 1
 
-    def _computeInfo(self):
-        return self.get_status()
+            keys = pygame.key.get_pressed()
 
-    def _draw_target(self):
-        t = self.target_pos
-        size = 0.15
-        color = [1, 0, 0]
-        p.addUserDebugLine(
-            [t[0]-size, t[1], t[2]], [t[0]+size, t[1], t[2]],
-            color, lineWidth=3, physicsClientId=self.CLIENT)
-        p.addUserDebugLine(
-            [t[0], t[1]-size, t[2]], [t[0], t[1]+size, t[2]],
-            color, lineWidth=3, physicsClientId=self.CLIENT)
-        p.addUserDebugLine(
-            [t[0], t[1], t[2]-size], [t[0], t[1], t[2]+size],
-            color, lineWidth=3, physicsClientId=self.CLIENT)
-        p.addUserDebugText(
-            "TARGET", [t[0], t[1], t[2]+0.25],
-            textColorRGB=color, textSize=1.5, physicsClientId=self.CLIENT)
+            # Camera controls
+            if keys[pygame.K_LEFT]:
+                self.cam_azimuth -= 2
+            if keys[pygame.K_RIGHT]:
+                self.cam_azimuth += 2
+            if keys[pygame.K_UP]:
+                self.cam_elevation = min(89, self.cam_elevation + 2)
+            if keys[pygame.K_DOWN]:
+                self.cam_elevation = max(5, self.cam_elevation - 2)
+            if keys[pygame.K_EQUALS] or keys[pygame.K_PLUS]:
+                self.cam_zoom = min(200, self.cam_zoom + 2)
+            if keys[pygame.K_MINUS]:
+                self.cam_zoom = max(20, self.cam_zoom - 2)
 
-    def _draw_arena(self):
-        b = self.cfg.arena_bounds
-        color = [0.5, 0.5, 0.5]
-        corners = [[-b, -b, 0], [b, -b, 0], [b, b, 0], [-b, b, 0]]
-        for i in range(4):
-            p.addUserDebugLine(
-                corners[i], corners[(i+1) % 4],
-                color, lineWidth=1, physicsClientId=self.CLIENT)
-
-
-def run_game(args):
-    cfg = EnvConfig()
-    use_controller = not args.keyboard
-    controller = None
-
-    if use_controller:
-        try:
-            from eval.controller import XboxController
-            controller = XboxController()
-        except (ImportError, RuntimeError) as e:
-            print(f"Controller not available: {e}")
-            print("Falling back to keyboard controls.")
-            use_controller = False
-
-    # Load RL model if provided
-    model = None
-    if args.model:
-        from stable_baselines3 import SAC
-        model = SAC.load(args.model)
-        print(f"Loaded model: {args.model}")
-
-    env = GameEnv(mode=args.mode, config=cfg)
-
-    # Determine which drone the human controls
-    if args.mode == "free_flight":
-        human_drone = 0
-        ai_drone = None
-    elif args.mode == "attack":
-        human_drone = 1  # attacker
-        ai_drone = 0     # defender
-    else:  # defend
-        human_drone = 0  # defender
-        ai_drone = 1     # attacker
-
-    input_name = "Xbox Controller" if use_controller else "Keyboard (WASD + Space/Shift)"
-    role = {"free_flight": "PILOT", "attack": "ATTACKER", "defend": "DEFENDER"}[args.mode]
-
-    print(f"""
-{'='*60}
-  DRONE vs DRONE — Game Mode: {args.mode.upper()}
-{'='*60}
-  You are the {role}.
-  Input: {input_name}
-  {'AI Defender: ' + (args.model or 'random') if args.mode == 'attack' else ''}
-  {'Scripted Attacker' if args.mode == 'defend' else ''}
-
-  Controls:
-    {"Left stick = XY, Triggers = Z, B = reset, Start = quit" if use_controller else "WASD = XY, Space/Shift = Z, R = reset, ESC = quit"}
-
-  {'Click on PyBullet window for keyboard focus.' if not use_controller else ''}
-{'='*60}
-""")
-
-    episode = 0
-    while True:
-        episode += 1
-        obs, info = env.reset()
-
-        # Reset PID targets to initial positions
-        if args.mode == "free_flight":
-            env.pid_targets[0] = np.array([0.0, 0.0, 1.0])
-        elif args.mode == "attack":
-            env.pid_targets[0] = np.array([0.0, 0.5, 1.0])
-            env.pid_targets[1] = np.array([2.5, 0.0, 1.0])
-        else:
-            env.pid_targets[0] = np.array([0.0, 0.5, 1.0])
-            env.pid_targets[1] = np.array([2.5, 0.0, 1.0])
-
-        if args.mode != "free_flight":
-            env._draw_target()
-
-        done = False
-        steps = 0
-        print(f"--- Episode {episode} --- Score: You={env.score['human']} AI={env.score['ai']} Timeout={env.score['timeout']}")
-
-        while not done:
-            # Check quit/reset
-            if use_controller:
-                buttons = controller.get_buttons()
-                if buttons["quit"]:
-                    print("\nQuit.")
-                    env.close()
-                    if controller:
-                        controller.close()
-                    return
-                if buttons["reset"]:
-                    print("  Reset.")
-                    break
-            else:
-                key_action = env.check_special_keys()
-                if key_action == "quit":
-                    print("\nQuit.")
-                    env.close()
-                    return
-                if key_action == "reset":
-                    print("  Reset.")
-                    break
-
-            # Get human input
-            if use_controller:
-                vel = controller.get_velocity()
-            else:
-                vel = env.get_keyboard_velocity()
-
-            env.apply_input(human_drone, vel)
-
-            # AI/scripted control for second drone
-            if ai_drone is not None:
-                if args.mode == "defend":
-                    # Scripted attacker: fly toward target
-                    att_state = env._getDroneStateVector(ai_drone)
-                    to_target = env.target_pos - att_state[0:3]
-                    dist = np.linalg.norm(to_target)
-                    if dist > 0.01:
-                        att_vel = to_target / dist * env.cfg.attacker_speed_scale
-                        env.pid_targets[ai_drone] += att_vel * env.move_speed
-                elif model is not None:
-                    action, _ = model.predict(obs, deterministic=True)
-                    # Convert RL velocity to PID target update
-                    ai_vel = action[:3] if len(action) >= 3 else action
-                    env.apply_input(ai_drone, ai_vel)
-
-            # Step physics (action is unused, RPMs come from PID targets)
-            dummy_action = np.zeros(4, dtype=np.float32)
-            obs, reward, terminated, truncated, info = env.step(dummy_action)
-            done = terminated or truncated
-            steps += 1
-
-            # Real-time pacing
-            time.sleep(1.0 / cfg.ctrl_freq)
-
-            # HUD
-            if steps % 10 == 0:
-                status = env.get_status()
-                if args.mode == "free_flight":
-                    pos = status["pos"]
-                    print(f"  pos=({pos[0]:.1f}, {pos[1]:.1f}, {pos[2]:.1f}) alt={status['alt']:.2f}m", end="\r")
+            # Compute action based on mode
+            if self.mode == "free":
+                vel = self.get_keyboard_velocity(keys)
+                action = vel.reshape(1, 3)
+            elif self.mode == "defend":
+                vel = self.get_keyboard_velocity(keys)
+                action = vel.reshape(1, 3)
+            elif self.mode == "attack":
+                # In intercept mode, drone0 is defender. For human-as-attacker,
+                # we send zeros for defender and the env's internal attacker model
+                # handles drone1. This mode needs the attacker to be human-controlled
+                # which requires env changes. For now, human controls defender.
+                vel = self.get_keyboard_velocity(keys)
+                action = vel.reshape(1, 3)
+            elif self.mode == "watch":
+                if self.defender_model:
+                    action, _ = self.defender_model.predict(obs, deterministic=True)
                 else:
-                    print(f"  step={steps:4d} | drone_dist={status['drone_dist']:.2f}m | "
-                          f"to_target={status['att_to_target']:.2f}m", end="\r")
+                    action = np.zeros((1, 3), dtype=np.float32)
 
-        # Episode outcome
-        if args.mode != "free_flight":
-            status = env.get_status()
-            if status.get("intercepted"):
-                if args.mode == "defend":
-                    env.score["human"] += 1
-                    print(f"\n  INTERCEPTED! You win! (steps={steps})")
-                else:
-                    env.score["ai"] += 1
-                    print(f"\n  INTERCEPTED! AI wins. (steps={steps})")
-            elif status.get("target_reached"):
-                if args.mode == "attack":
-                    env.score["human"] += 1
-                    print(f"\n  TARGET REACHED! You win! (steps={steps})")
-                else:
-                    env.score["ai"] += 1
-                    print(f"\n  TARGET REACHED! Attacker wins. (steps={steps})")
-            else:
-                env.score["timeout"] += 1
-                print(f"\n  Timeout/bounds. (steps={steps})")
-        else:
-            print(f"\n  Episode ended. (steps={steps})")
-        print()
+            obs, rewards, dones, infos = self.env.step(action)
+            self.episode_steps += 1
 
-    env.close()
-    if controller:
-        controller.close()
+            if dones[0]:
+                info = infos[0]
+                if info.get("intercepted"):
+                    self.interceptions += 1
+                elif info.get("target_reached"):
+                    self.target_reached += 1
+                self.trail_defender.clear()
+                self.trail_attacker.clear()
+                self.episode_steps = 0
+                self.episodes += 1
+
+            # Get positions
+            def_pos, att_pos, target_pos = self.get_positions()
+
+            # Update trails
+            self.trail_defender.append(tuple(def_pos))
+            if len(self.trail_defender) > self.max_trail:
+                self.trail_defender.pop(0)
+            if att_pos is not None:
+                self.trail_attacker.append(tuple(att_pos))
+                if len(self.trail_attacker) > self.max_trail:
+                    self.trail_attacker.pop(0)
+
+            # --- DRAW ---
+            screen.fill(BLACK)
+            self.draw_grid(screen)
+            self.draw_arena_bounds(screen)
+            self.draw_axes(screen)
+
+            self.draw_trail(screen, self.trail_defender, BLUE)
+            if att_pos is not None:
+                self.draw_trail(screen, self.trail_attacker, RED)
+
+            self.draw_target(screen, target_pos)
+
+            if att_pos is not None:
+                self.draw_intercept_radius(screen, att_pos)
+
+            self.draw_drone(screen, def_pos, BLUE, "DEF", size=12)
+            if att_pos is not None:
+                self.draw_drone(screen, att_pos, RED, "ATK", size=12)
+
+            # Distance line between drones
+            if att_pos is not None:
+                p1 = self.world_to_screen(def_pos)
+                p2 = self.world_to_screen(att_pos)
+                dist = np.linalg.norm(np.array(def_pos) - np.array(att_pos))
+                color = GREEN if dist < self.cfg.intercept_dist else YELLOW
+                pygame.draw.line(screen, color, p1, p2, 1)
+
+            self.draw_hud(screen, def_pos, att_pos, target_pos)
+
+            pygame.display.flip()
+            clock.tick(self.env.fps)
+
+        pygame.quit()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Interactive Drone Game")
+    parser.add_argument("--mode", type=str, default="free",
+                        choices=["free", "defend", "attack", "watch"])
+    parser.add_argument("--defender", type=str, default=None,
+                        help="Path to defender model (watch/attack modes)")
+    parser.add_argument("--attacker", type=str, default=None,
+                        help="Path to attacker model (watch/defend modes)")
+    parser.add_argument("--arena", type=float, default=8.0,
+                        help="Arena size in meters")
+    args = parser.parse_args()
+
+    wp.init()
+
+    game = DroneGame(
+        mode=args.mode,
+        defender_path=args.defender,
+        attacker_path=args.attacker,
+        arena_size=args.arena,
+    )
+    game.run()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Drone Game Mode")
-    parser.add_argument("--mode", choices=["free_flight", "attack", "defend"],
-                        default="free_flight", help="Game mode")
-    parser.add_argument("--model", type=str, default=None,
-                        help="Path to trained RL model (.zip)")
-    parser.add_argument("--keyboard", action="store_true",
-                        help="Use keyboard instead of Xbox controller")
-    args = parser.parse_args()
-    run_game(args)
+    main()

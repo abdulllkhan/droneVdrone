@@ -1,43 +1,52 @@
 # droneVdrone
 
-RL-trained defense drone that learns to intercept (crash into) an incoming attack drone to protect a target.
+RL-trained defense drone that learns to intercept an incoming attack drone to protect a target. Trained through progressive curriculum learning and adversarial co-training on GPU-accelerated physics.
 
 ## How It Works
 
 Two drones in a 3D physics simulation:
 - **Defender** (RL agent) — learns to fly toward and intercept the attacker
-- **Attacker** (scripted PID) — flies straight toward a target position
+- **Attacker** — starts as scripted PID, then becomes RL-trained and evasive through adversarial co-training
 
-The defender is trained using **SAC (Soft Actor-Critic)** with velocity-based control — the RL agent outputs desired velocities and a PID controller handles low-level motor commands.
+The defender is trained using **SAC (Soft Actor-Critic)** with a progressive curriculum:
+1. **Phase 1**: Fly to random static targets (learn basic flight)
+2. **Phase 2**: Chase a moving target at increasing speeds (learn pursuit)
+3. **Phase 3**: Intercept an RL-trained attacker (learn interception)
+4. **Adversarial**: Co-train attacker and defender against each other (arms race)
 
-### Two Physics Backends
+Weights transfer between phases via `SAC.load()` — each phase builds on the previous one.
 
-| Backend | Engine | Runs on | Parallel envs | Use case |
-|---|---|---|---|---|
-| **PyBullet** | gym-pybullet-drones | CPU | 4-16 | Prototyping, 3D visualization |
-| **Newton** | NVIDIA Warp | GPU (CUDA) | 256-4096 | Fast training (~530x speedup) |
-
-### Environment Details
+### Physics
 
 | Property | Value |
 |---|---|
-| Observation | 19-dim: positions, velocities, relative vector, distance, target |
-| Action | 3-dim: desired velocity (vx, vy, vz) in [-1, 1], PID converts to RPMs |
-| Reward | Dense (approach + proximity bonus + altitude match) + interception (+100) / failure (-100) |
+| Engine | Newton/NVIDIA Warp (GPU CUDA) |
+| Parallel envs | 256 (default, up to 4096) |
+| Force model | Direct world-frame forces (no propeller sim) |
+| Observation | 19-dim: positions, velocities, relative vectors |
+| Action | 3-dim: desired velocity (vx, vy, vz) in [-1, 1] |
 | Drone model | Crazyflie 2.x (27g nano-quadrotor) |
-| Intercept distance | 0.5m (close enough to deploy countermeasure) |
-| Control freq | 48 Hz (5 physics substeps at 240 Hz) |
+| Intercept distance | 0.5m |
+| Control freq | 48 Hz (5 substeps at 240 Hz) |
+
+### Training Results
+
+Full evaluation matrix (interception rate, 50 episodes each):
+
+| Defender | Phase2 | Adv R1 | Adv R2 | Mix R1 | Mix R2 | Mix R3 | Scripted |
+|---|---|---|---|---|---|---|---|
+| Original (Phase 3) | 100% | 70% | 6% | 2% | 4% | 92% | 72% |
+| Adv Round 1 | 72% | 86% | 36% | 0% | 2% | 100% | 68% |
+| **Best Generalist** | **100%** | **98%** | **46%** | **44%** | **38%** | **100%** | **100%** |
+
+**Best model**: `defender_best_generalist.zip` — mixture-trained against 7 RL attackers + scripted pursuit with reward v3 (closing speed bonus). Maintains 100% against simpler attackers, 38-46% against the hardest evasive opponents. **Zero attacker wins** across all matchups — even failed interceptions deny the target.
+
+Key findings:
+- **Mixture-of-opponents training** prevents catastrophic forgetting (Adv Round 2 dropped to 20% vs Phase2 without it)
+- **Closing speed reward bonus** (v3) teaches aggressive pursuit behavior
+- Progressive curriculum (fly → chase → intercept → adversarial) enables faster convergence via weight transfer
 
 ## Setup
-
-### Prerequisites
-
-```bash
-# Ubuntu/Debian — needed to compile PyBullet
-sudo apt-get install python3-dev build-essential
-```
-
-### Install
 
 ```bash
 git clone git@github.com:abdulllkhan/droneVdrone.git
@@ -47,63 +56,50 @@ python3 -m venv venv
 source venv/bin/activate
 
 pip install -r requirements.txt
-```
+pip install newton  # GPU physics
 
-For GPU-accelerated training (Newton backend), also install:
-
-```bash
-pip install newton
-```
-
-For CUDA on DGX Spark (GB10 GPU), install the nightly PyTorch build:
-
-```bash
+# For DGX Spark (GB10 GPU)
 pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128 --force-reinstall
 ```
 
 ## Usage
 
-### Train the defender (PyBullet — CPU)
+### Progressive Training (full pipeline)
 
 ```bash
-source venv/bin/activate
-python -m train.train_defender
+# All phases (fly → chase → intercept)
+python -m train.train_progressive --num-envs 256
+
+# Individual phases
+python -m train.train_progressive --phase 1                                    # fly to target
+python -m train.train_progressive --phase 2 --resume models/phase1_fly_final.zip  # chase
+python -m train.train_progressive --phase 3 --attacker models/phase2_chase_speed0.5_final.zip  # intercept
 ```
 
-Options:
-- `--timesteps 2000000` — override total training steps (default: 1M)
-- `--gui` — show PyBullet GUI during training (slow, for debugging)
-
-### Train the defender (Newton — GPU)
+### Adversarial Co-Training
 
 ```bash
-source venv/bin/activate
-python -m train.train_defender_newton --num-envs 256
+# Train attacker and defender against each other in alternating rounds
+python -m train.train_adversarial --defender models/defender_v2_99pct.zip --rounds 4
+python -m train.train_adversarial --defender models/best_model.zip --attacker models/phase2v2_best_attacker.zip --rounds 6
 ```
 
-Options:
-- `--timesteps 50000000` — override total training steps (default: 1M)
-- `--num-envs 256` — number of parallel GPU environments (default: from config)
-
-### Monitor training
+### Evaluation
 
 ```bash
-source venv/bin/activate
+# Evaluate any mode
+python -m eval.eval_progressive --model models/best_model.zip --mode fly_to_target
+python -m eval.eval_progressive --model models/best_model.zip --mode chase --speed 0.5
+python -m eval.eval_progressive --model models/best_model.zip --mode intercept --attacker models/phase2v2_best_attacker.zip
+
+# With trajectory plots and animated GIF
+python -m eval.eval_progressive --model models/defender_generalist.zip --mode intercept --attacker models/adv_attacker_round2.zip --gif --episodes 50
+```
+
+### Monitor Training
+
+```bash
 tensorboard --logdir logs/tensorboard
-# Open http://localhost:6006
-```
-
-### Evaluate a trained model
-
-PyBullet (with 3D visualization):
-```bash
-python -m eval.evaluate --model models/best_model.zip --episodes 20
-python -m eval.evaluate --model models/best_model.zip --gui --episodes 5
-```
-
-Newton (fast, no GUI):
-```bash
-python -m eval.evaluate_newton --model models/best_model.zip --episodes 50
 ```
 
 ## Project Structure
@@ -111,15 +107,16 @@ python -m eval.evaluate_newton --model models/best_model.zip --episodes 50
 ```
 droneVdrone/
 ├── envs/
-│   ├── intercept_env.py          # PyBullet Gymnasium env (CPU)
-│   └── newton_intercept_env.py   # Newton GPU VecEnv (CUDA)
+│   ├── newton_env.py             # Unified GPU env (fly/chase/intercept/evade)
+│   ├── newton_intercept_env.py   # Legacy Newton env (reference)
+│   └── intercept_env.py          # PyBullet env (CPU, legacy)
 ├── train/
 │   ├── config.py                 # Hyperparameters and env settings
-│   ├── train_defender.py         # SAC training (PyBullet)
-│   └── train_defender_newton.py  # SAC training (Newton GPU)
+│   ├── train_progressive.py      # Progressive training pipeline
+│   └── train_adversarial.py      # Adversarial co-training
 ├── eval/
-│   ├── evaluate.py               # PyBullet evaluation + 3D viewer
-│   └── evaluate_newton.py        # Newton evaluation
+│   ├── eval_progressive.py       # Evaluation with plots and GIFs
+│   └── eval_matrix.py            # Cross-evaluation of all defender×attacker pairs
 ├── tests/
 │   └── test_newton_env.py        # Unit tests for Newton env
 ├── models/                       # Saved trained models (gitignored)
@@ -128,23 +125,30 @@ droneVdrone/
 
 ## Configuration
 
-All hyperparameters are in `train/config.py`:
+All hyperparameters in `train/config.py`:
 
-- **EnvConfig** — arena bounds, interception thresholds, attacker speed, spawn ranges
-- **TrainConfig** — SAC hyperparameters, learning rate, batch size, checkpoint frequency
+- **EnvConfig** — physics params, arena bounds, interception thresholds, spawn ranges, training mode
+- **TrainConfig** — SAC hyperparameters, learning rate, network architecture, checkpoint frequency
+
+Key settings:
+- `ent_coef = 0.1` — fixed entropy to prevent collapse (was "auto" → collapsed to 0.003)
+- Manual observation normalization in GPU kernels (pos/4, vel/5, rel/6) — replaced VecNormalize which caused train/eval mismatch
+- Early stopping after 100 evals with no improvement
 
 ## Roadmap
 
-- [x] Phase 1: Custom env + train defender vs scripted attacker
-- [x] Velocity-based control (PID handles flight stability)
-- [x] GPU-accelerated physics (Newton/Warp backend — 530x speedup)
-- [ ] Phase 2: Curriculum learning (increasingly evasive attacker)
-- [ ] Phase 3: Adversarial co-training (both drones learn)
-- [ ] Phase 4: Domain randomization, wind, obstacles
-- [ ] Phase 5: Sim-to-real transfer with Crazyflie hardware
+- [x] Phase 1: Fly to random static targets (96% arrival rate)
+- [x] Phase 2: Chase moving targets with speed curriculum (94% at 0.5 m/s)
+- [x] Phase 3: Intercept RL-trained attacker (100% vs Phase 2 attacker)
+- [x] Adversarial co-training (attacker/defender arms race)
+- [x] GPU-accelerated physics (Newton/Warp — 256 parallel envs)
+- [x] Velocity-based control (sim-to-real compatible)
+- [x] Mixture-of-opponents training (prevents adversarial overfitting)
+- [ ] Domain randomization (wind, noise, latency)
+- [ ] Sim-to-real transfer with Crazyflie hardware
 
 ## Tech Stack
 
-- **Simulators**: gym-pybullet-drones (CPU) + Newton/Warp (GPU)
+- **Physics**: Newton/NVIDIA Warp (GPU)
 - **RL**: Stable Baselines3 (SAC)
 - **Hardware**: NVIDIA DGX Spark (GB10 GPU, 128GB)
