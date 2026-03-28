@@ -24,6 +24,8 @@ env/
 
 # Training artifacts
 models/*.zip
+models/*.png
+models/phase2_chase_speed*_final
 logs/
 runs/
 tensorboard_logs/
