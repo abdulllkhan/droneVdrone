@@ -399,20 +399,20 @@ def compute_rewards_evade_kernel(
     done = 0
 
     if dist_to_target < target_reached_dist:
-        reward = 200.0
+        reward = 500.0  # Massive reward — reaching target is the #1 priority
         done = 1
         info_target_reached[world_id] = 1
     elif dist_to_defender < intercept_dist:
-        reward = -200.0
+        reward = -100.0  # Penalty for getting caught, but less than target reward
         done = 1
         info_intercepted[world_id] = 1
     else:
         pd = prev_dist[world_id]
         if pd > 0.0:
-            reward += (pd - dist_to_target) * 80.0  # Strong target-approach incentive
-        reward += 3.0 / (dist_to_target + 0.1) - 3.0 / (4.0 + 0.1)  # Proximity magnet to target
+            reward += (pd - dist_to_target) * 100.0  # Very strong target-approach incentive
+        reward += 5.0 / (dist_to_target + 0.1) - 5.0 / (4.0 + 0.1)  # Strong proximity magnet
         if dist_to_defender < 1.0:
-            reward -= (1.0 - dist_to_defender) * 1.0  # Mild evasion — don't dominate approach
+            reward -= (1.0 - dist_to_defender) * 0.5  # Very mild evasion — target >> survival
         # Altitude penalty — penalize flying too low (ground crash avoidance)
         att_z = att_pos[2]
         if att_z < 0.8:
@@ -627,7 +627,7 @@ def _build_drone(builder, arm_length, collision_group, label="drone"):
     body = builder.add_body(label=label)
     bar_h = arm_length * 0.05
     bar_w = arm_length * 0.05
-    density = 84.4  # tuned so drone mass ≈ 0.027 kg (CrazyFlie 2.1)
+    density = 781.5  # tuned so drone mass ≈ 0.250 kg (250g quadrotor)
 
     cfg = nt.ModelBuilder.ShapeConfig(
         density=density, collision_group=collision_group
@@ -694,7 +694,7 @@ class NewtonDroneEnv(VecEnv):
         self.max_steps = int(self.cfg.episode_secs * self.cfg.ctrl_freq)
         self.target_pos_wp = wp.vec3(*self.cfg.target_pos)
 
-        self.drone_mass = 0.027  # placeholder
+        self.drone_mass = self.cfg.drone_mass  # 250g quadrotor
         self.gravity = 9.81
 
         # Speed limits
@@ -1460,6 +1460,12 @@ class NewtonDroneEnv(VecEnv):
         """Randomize defender + attacker positions for intercept mode."""
         positions = self.init_pos_buf.numpy()
         target = np.array(self.cfg.target_pos)
+
+        # Randomize target altitude each reset
+        if self.cfg.target_alt_randomize:
+            alt = rng.uniform(*self.cfg.target_alt_range_intercept)
+            target[2] = alt
+            self.target_pos_wp = wp.vec3(float(target[0]), float(target[1]), float(alt))
 
         for i in indices:
             angle = rng.uniform(0, 2 * np.pi)
