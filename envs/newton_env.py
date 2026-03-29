@@ -409,10 +409,14 @@ def compute_rewards_evade_kernel(
     else:
         pd = prev_dist[world_id]
         if pd > 0.0:
-            reward += (pd - dist_to_target) * 50.0
-        reward += 1.0 / (dist_to_target + 0.1) - 1.0 / (4.0 + 0.1)
-        if dist_to_defender < 1.5:
-            reward -= (1.5 - dist_to_defender) * 2.0
+            reward += (pd - dist_to_target) * 80.0  # Strong target-approach incentive
+        reward += 3.0 / (dist_to_target + 0.1) - 3.0 / (4.0 + 0.1)  # Proximity magnet to target
+        if dist_to_defender < 1.0:
+            reward -= (1.0 - dist_to_defender) * 1.0  # Mild evasion — don't dominate approach
+        # Altitude penalty — penalize flying too low (ground crash avoidance)
+        att_z = att_pos[2]
+        if att_z < 0.8:
+            reward -= (0.8 - att_z) * 5.0
         reward -= 0.05
 
         # Obstacle proximity penalty for attacker
@@ -695,6 +699,7 @@ class NewtonDroneEnv(VecEnv):
 
         # Speed limits
         self.defender_speed_limit = 0.15 * 30.0 * (1000.0 / 3600.0)  # ~1.25 m/s
+        self.attacker_speed_limit = self.cfg.attacker_speed_limit      # RL attacker max speed (m/s)
         self.attacker_speed = self.cfg.attacker_speed_scale * 0.8
 
         # Force model
@@ -828,7 +833,7 @@ class NewtonDroneEnv(VecEnv):
         actions = self._actions
 
         if self.mode == "evade":
-            vel_np = actions * self.defender_speed_limit
+            vel_np = actions * self.attacker_speed_limit
             self.drone1_vel = wp.array(
                 [wp.vec3(v[0], v[1], v[2]) for v in vel_np],
                 dtype=wp.vec3, device=self.device
@@ -1036,7 +1041,7 @@ class NewtonDroneEnv(VecEnv):
                     env_indices = np.where(mask)[0]
                     subset_obs = obs[env_indices]
                     actions, _ = model.predict(subset_obs, deterministic=True)
-                    vel_np[env_indices] = actions * self.defender_speed_limit
+                    vel_np[env_indices] = actions * self.attacker_speed_limit
 
             self.drone1_vel = wp.array(
                 [wp.vec3(v[0], v[1], v[2]) for v in vel_np],
@@ -1045,7 +1050,7 @@ class NewtonDroneEnv(VecEnv):
         elif self.attacker_model is not None:
             obs = self._get_attacker_obs()
             actions, _ = self.attacker_model.predict(obs, deterministic=True)
-            vel_np = actions * self.defender_speed_limit
+            vel_np = actions * self.attacker_speed_limit
             self.drone1_vel = wp.array(
                 [wp.vec3(v[0], v[1], v[2]) for v in vel_np],
                 dtype=wp.vec3, device=self.device

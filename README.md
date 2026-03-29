@@ -33,17 +33,18 @@ Weights transfer between phases via `SAC.load()` — each phase builds on the pr
 
 Full evaluation matrix (interception rate, 50 episodes each):
 
-| Defender | Phase2 | Adv R1 | Adv R2 | Mix R1 | Mix R2 | Mix R3 | Scripted |
-|---|---|---|---|---|---|---|---|
-| Original (Phase 3) | 100% | 70% | 6% | 2% | 4% | 92% | 72% |
-| Adv Round 1 | 72% | 86% | 36% | 0% | 2% | 100% | 68% |
-| **Best Generalist** | **100%** | **98%** | **46%** | **44%** | **38%** | **100%** | **100%** |
+| Defender | Mix Att R4 | Adv Att R4 | Adv Att R2 | Phase2 | Scripted |
+|---|---|---|---|---|---|
+| **Best (Mix Def R4)** | **22%** | **20%** | **94%** | **96%** | **100%** |
+| Adv Def R4 | 12% | 20% | 98% | 92% | 96% |
+| Phase 3 Def | 14% | 4% | 86% | 90% | 98% |
 
-**Best model**: `defender_best_generalist.zip` — mixture-trained against 7 RL attackers + scripted pursuit with reward v3 (closing speed bonus). Maintains 100% against simpler attackers, 38-46% against the hardest evasive opponents. **Zero attacker wins** across all matchups — even failed interceptions deny the target.
+**Best model**: `defender_best_v3.zip` — mixture-trained against pool of RL attackers (1.4 m/s, faster than defender's 1.25 m/s) with 3 obstacles and higher altitude (z=2.0m). **Zero attacker target reaches** across all matchups — even when the defender can't intercept the fastest evasive attackers, it denies the target.
 
 Key findings:
-- **Mixture-of-opponents training** prevents catastrophic forgetting (Adv Round 2 dropped to 20% vs Phase2 without it)
-- **Closing speed reward bonus** (v3) teaches aggressive pursuit behavior
+- **Faster attacker (1.4 m/s vs 1.25 m/s)** creates genuine evasion challenge — speed asymmetry means interception requires prediction, not just pursuit
+- **3 static obstacles** add environmental complexity (proximity penalties in reward)
+- **Mixture-of-opponents training** prevents catastrophic forgetting across attacker generations
 - Progressive curriculum (fly → chase → intercept → adversarial) enables faster convergence via weight transfer
 
 ## Setup

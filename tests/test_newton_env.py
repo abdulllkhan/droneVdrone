@@ -340,7 +340,7 @@ class TestConfig:
 
     def test_obstacle_defaults(self):
         cfg = EnvConfig()
-        assert cfg.num_obstacles == 0
+        assert cfg.num_obstacles == 3
         assert cfg.obstacle_radius > 0
         assert cfg.obstacle_height > 0
 

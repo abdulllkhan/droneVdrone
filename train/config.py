@@ -13,31 +13,35 @@ class EnvConfig:
 
     # Arena
     arena_bounds: float = 4.0     # XY bounds (meters)
-    altitude_max: float = 3.0     # Max altitude (meters)
-    altitude_min: float = 0.05    # Min altitude (meters)
+    altitude_max: float = 4.0     # Max altitude (meters)
+    altitude_min: float = 0.3     # Min altitude (meters) — prevents ground crashes
 
     # Interception
-    intercept_dist: float = 0.50  # Interception threshold (meters)
+    intercept_dist: float = 0.75  # Interception threshold (meters) — larger halo makes defense easier
     target_reached_dist: float = 0.3  # Attacker wins threshold (meters)
 
     # Attacker
-    attacker_speed_scale: float = 0.6  # Scale PID output (1.0 = full speed)
+    attacker_speed_scale: float = 1.0  # Scripted attacker speed (1.0 = full speed)
+    attacker_speed_limit: float = 1.4  # RL attacker max speed (m/s) — slightly faster than defender (~1.25)
 
     # Initialization ranges
-    attacker_dist_range: tuple = (2.0, 3.0)   # Start distance from target
-    attacker_alt_range: tuple = (0.5, 1.5)
+    attacker_dist_range: tuple = (1.0, 2.0)   # Start distance from target (close = aggressive)
+    attacker_alt_range: tuple = (1.5, 2.5)
     defender_dist_range: tuple = (0.3, 1.0)    # Start distance from target
-    defender_alt_range: tuple = (0.7, 1.3)
+    defender_alt_range: tuple = (1.5, 2.5)
 
-    # Target position
-    target_pos: tuple = (0.0, 0.0, 1.0)
+    # Target position (z randomized during reset between target_alt_range)
+    target_pos: tuple = (0.0, 0.0, 2.0)       # Default target pos (overridden if randomized)
+    target_alt_randomize: bool = True          # Randomize target altitude each episode
+    target_alt_range_intercept: tuple = (1.0, 3.0)  # Target altitude range for intercept/evade
 
     # Force model (direct body forces, no propeller simulation)
-    # Drone mass ~0.027kg, hover force = 0.265N
+    # Drone mass ~0.250kg (250g quadrotor), hover force = mass * g = 2.45N
     # max_force must be >> hover force to allow maneuvering while compensating gravity
+    drone_mass: float = 0.250      # Drone mass (kg) — 250g quadrotor
     force_kp: float = 10.0         # Proportional gain for velocity tracking
     force_kd: float = 4.0          # Derivative gain (damping, prevents oscillation)
-    max_force: float = 2.0         # Max force magnitude (Newtons, ~7.5x drone weight)
+    max_force: float = 8.0         # Max force magnitude (Newtons, ~3.3x drone weight)
     angular_damping: float = 5.0   # Angular velocity damping to prevent spinning
 
     # Training mode (for progressive training)
@@ -47,7 +51,7 @@ class EnvConfig:
     defender_model_path: str = ""  # Path to frozen defender model (evade mode)
 
     # Obstacles
-    num_obstacles: int = 0                       # Number of obstacles per world (0 = disabled)
+    num_obstacles: int = 3                       # Number of obstacles per world (0 = disabled)
     obstacle_radius: float = 0.15                # Obstacle cylinder radius (meters)
     obstacle_height: float = 2.0                 # Obstacle cylinder half-height (meters)
     obstacle_placement_range: float = 2.0        # Max distance from origin for obstacle placement

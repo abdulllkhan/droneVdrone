@@ -69,6 +69,12 @@ class DroneGame:
             "mode": env_mode,
             "arena_bounds": arena_size,
             "episode_secs": 30.0,
+            "target_pos": (0.0, 0.0, 2.0),
+            "attacker_alt_range": (1.5, 2.5),
+            "defender_alt_range": (1.5, 2.5),
+            "altitude_min": 0.3,
+            "altitude_max": 4.0,
+            "num_obstacles": 3,
         }
         if use_two and attacker_path:
             cfg_kwargs["attacker_model_path"] = attacker_path
