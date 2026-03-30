@@ -1,18 +1,21 @@
 # droneVdrone
 
-RL-trained defense drone that learns to intercept an incoming attack drone to protect a target. Trained through progressive curriculum learning and adversarial co-training on GPU-accelerated physics.
+RL-trained defense drones that learn to intercept incoming attack drones to protect a target. Supports 1v1 through NvM swarm scenarios, trained through progressive curriculum learning and adversarial co-training on GPU-accelerated physics.
 
 ## How It Works
 
-Two drones in a 3D physics simulation:
-- **Defender** (RL agent) — learns to fly toward and intercept the attacker
-- **Attacker** — starts as scripted PID, then becomes RL-trained and evasive through adversarial co-training
+Drones in a 3D physics simulation:
+- **Defenders** (RL agents) — learn to fly toward and intercept attackers
+- **Attackers** — scripted PID → RL-trained → evasive through adversarial co-training
 
-The defender is trained using **SAC (Soft Actor-Critic)** with a progressive curriculum:
+### Training Pipeline
+
 1. **Phase 1**: Fly to random static targets (learn basic flight)
 2. **Phase 2**: Chase a moving target at increasing speeds (learn pursuit)
 3. **Phase 3**: Intercept an RL-trained attacker (learn interception)
-4. **Adversarial**: Co-train attacker and defender against each other (arms race)
+4. **Adversarial**: Co-train attacker and defender (arms race)
+5. **Mixture**: Train against pool of attacker generations (prevent forgetting)
+6. **Swarm**: Scale to NvM with CTDE parameter sharing
 
 Weights transfer between phases via `SAC.load()` — each phase builds on the previous one.
 
@@ -23,11 +26,17 @@ Weights transfer between phases via `SAC.load()` — each phase builds on the pr
 | Engine | Newton/NVIDIA Warp (GPU CUDA) |
 | Parallel envs | 256 (default, up to 4096) |
 | Force model | Direct world-frame forces (no propeller sim) |
-| Observation | 19-dim: positions, velocities, relative vectors |
-| Action | 3-dim: desired velocity (vx, vy, vz) in [-1, 1] |
-| Drone model | Crazyflie 2.x (27g nano-quadrotor) |
-| Intercept distance | 0.5m |
+| Drone model | Crazyflie 2.x (250g, 8N max force) |
+| Intercept distance | 0.75m |
 | Control freq | 48 Hz (5 substeps at 240 Hz) |
+| Arena | 8m × 8m × 4m |
+
+### Observation Spaces
+
+| Mode | Dims | Contents |
+|---|---|---|
+| 1v1 | 35 | Self pos/vel, opponent pos/vel, relative, closing rate, accel, obstacles |
+| Swarm (NvM) | 57 | Self state, sorted attackers (×3), teammates (×2), obstacles (×3), target |
 
 ### Training Results
 
@@ -39,13 +48,13 @@ Full evaluation matrix (interception rate, 50 episodes each):
 | Adv Def R4 | 12% | 20% | 98% | 92% | 96% |
 | Phase 3 Def | 14% | 4% | 86% | 90% | 98% |
 
-**Best model**: `defender_best_v3.zip` — mixture-trained against pool of RL attackers (1.4 m/s, faster than defender's 1.25 m/s) with 3 obstacles and higher altitude (z=2.0m). **Zero attacker target reaches** across all matchups — even when the defender can't intercept the fastest evasive attackers, it denies the target.
+**Best model**: `defender_best_v5.zip` — mixture-trained against pool of RL attackers (1.4 m/s, faster than defender's ~1.25 m/s) with 3 obstacles, variable altitude target (1.0–3.0m), and 250g drone mass. **Zero attacker target reaches** across all matchups.
 
 Key findings:
-- **Faster attacker (1.4 m/s vs 1.25 m/s)** creates genuine evasion challenge — speed asymmetry means interception requires prediction, not just pursuit
+- **Speed asymmetry** (attacker 1.4 m/s vs defender ~1.25 m/s) — interception requires prediction, not just pursuit
 - **3 static obstacles** add environmental complexity (proximity penalties in reward)
-- **Mixture-of-opponents training** prevents catastrophic forgetting across attacker generations
-- Progressive curriculum (fly → chase → intercept → adversarial) enables faster convergence via weight transfer
+- **Mixture-of-opponents** training prevents catastrophic forgetting across attacker generations
+- **Variable target altitude** (1.0–3.0m) forces 3D spatial awareness
 
 ## Setup
 
@@ -65,7 +74,7 @@ pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu1
 
 ## Usage
 
-### Progressive Training (full pipeline)
+### Progressive Training (1v1)
 
 ```bash
 # All phases (fly → chase → intercept)
@@ -85,35 +94,53 @@ python -m train.train_adversarial --defender models/defender_v2_99pct.zip --roun
 python -m train.train_adversarial --defender models/best_model.zip --attacker models/phase2v2_best_attacker.zip --rounds 6
 ```
 
+### Swarm Training (NvM)
+
+```bash
+# 2v2 with obstacles and wind
+python -m train.train_swarm --defenders 2 --attackers 2 --num-worlds 128 --obstacles 3 --wind
+
+# 3v3 larger scenario
+python -m train.train_swarm --defenders 3 --attackers 3 --num-worlds 64 --timesteps 3000000
+
+# With observation noise
+python -m train.train_swarm --defenders 2 --attackers 2 --noise 0.02
+
+# Resume from checkpoint
+python -m train.train_swarm --defenders 2 --attackers 2 --resume models/swarm_2v2_final.zip
+```
+
 ### Evaluation
 
 ```bash
 # Evaluate any mode
 python -m eval.eval_progressive --model models/best_model.zip --mode fly_to_target
-python -m eval.eval_progressive --model models/best_model.zip --mode chase --speed 0.5
-python -m eval.eval_progressive --model models/best_model.zip --mode intercept --attacker models/phase2v2_best_attacker.zip
+python -m eval.eval_progressive --model models/best_model.zip --mode intercept --attacker models/adv_attacker_round2.zip
 
 # With trajectory plots and animated GIF
-python -m eval.eval_progressive --model models/defender_generalist.zip --mode intercept --attacker models/adv_attacker_round2.zip --gif --episodes 50
+python -m eval.eval_progressive --model models/defender_best_v5.zip --mode intercept --attacker models/adv_attacker_round1.zip --gif --episodes 50
 ```
 
-### Interactive Game (Physics Validation)
+### Interactive Game
 
 ```bash
 # Free flight — fly a drone with keyboard (WASD + Space/Shift)
 python -m eval.game
 
-# Watch RL models fight — best defender vs attacker
-python -m eval.game --mode watch --defender models/defender_best_generalist.zip --attacker models/adv_attacker_round1.zip
+# Watch RL 1v1 — best defender vs attacker
+python -m eval.game --mode watch --defender models/defender_best_v5.zip --attacker models/adv_attacker_round1.zip
 
-# You defend — control the blue drone, RL attacker goes for target
+# You defend — control the blue drone, RL attacker targets
 python -m eval.game --mode defend --attacker models/mix_attacker_round2.zip
 
-# You attack — control the red drone, RL defender tries to intercept
-python -m eval.game --mode attack --defender models/defender_best_generalist.zip
+# You attack — control the red drone, RL defender intercepts
+python -m eval.game --mode attack --defender models/defender_best_v5.zip
+
+# Swarm mode — watch NvM defenders vs attackers
+python -m eval.game --mode swarm --defenders 2 --attackers 2 --defender models/swarm_2v2_final.zip
 
 # Larger arena
-python -m eval.game --mode watch --arena 12 --defender models/defender_best_generalist.zip --attacker models/adv_attacker_round2.zip
+python -m eval.game --mode watch --arena 12 --defender models/defender_best_v5.zip --attacker models/adv_attacker_round2.zip
 ```
 
 Controls: WASD=move, Space=up, Shift=down, Arrows=rotate camera, +/-=zoom, R=reset, Q=quit
@@ -129,18 +156,22 @@ tensorboard --logdir logs/tensorboard
 ```
 droneVdrone/
 ├── envs/
-│   ├── newton_env.py             # Unified GPU env (fly/chase/intercept/evade)
+│   ├── newton_env.py             # 1v1 GPU env (fly/chase/intercept/evade + wind/noise)
+│   ├── newton_swarm_env.py       # NvM swarm GPU env (CTDE parameter sharing)
 │   ├── newton_intercept_env.py   # Legacy Newton env (reference)
 │   └── intercept_env.py          # PyBullet env (CPU, legacy)
 ├── train/
 │   ├── config.py                 # Hyperparameters and env settings
-│   ├── train_progressive.py      # Progressive training pipeline
-│   └── train_adversarial.py      # Adversarial co-training
+│   ├── train_progressive.py      # Progressive training pipeline (1v1)
+│   ├── train_adversarial.py      # Adversarial co-training (1v1)
+│   └── train_swarm.py            # Swarm training (NvM)
 ├── eval/
 │   ├── eval_progressive.py       # Evaluation with plots and GIFs
-│   └── eval_matrix.py            # Cross-evaluation of all defender×attacker pairs
+│   ├── eval_matrix.py            # Cross-evaluation of defender×attacker pairs
+│   └── game.py                   # Interactive game (free/defend/attack/watch/swarm)
 ├── tests/
-│   └── test_newton_env.py        # Unit tests for Newton env
+│   ├── test_newton_env.py        # 1v1 env tests (41 tests)
+│   └── test_swarm_env.py         # Swarm env tests (21 tests)
 ├── models/                       # Saved trained models (gitignored)
 └── logs/                         # TensorBoard logs (gitignored)
 ```
@@ -149,13 +180,36 @@ droneVdrone/
 
 All hyperparameters in `train/config.py`:
 
-- **EnvConfig** — physics params, arena bounds, interception thresholds, spawn ranges, training mode
-- **TrainConfig** — SAC hyperparameters, learning rate, network architecture, checkpoint frequency
+**EnvConfig** — physics, arena, interception thresholds, spawn ranges, swarm, domain randomization:
+- `drone_mass = 0.250` — 250g quadrotor (Crazyflie-scale)
+- `max_force = 8.0` — 3.3× drone weight for maneuvering
+- `intercept_dist = 0.75` — interception halo radius
+- `attacker_speed_limit = 1.4` — faster than defender (~1.25 m/s)
+- `num_defenders / num_attackers` — swarm configuration (1–3)
+- `wind_enabled / wind_max_force` — random wind perturbation
+- `obs_noise_std` — Gaussian observation noise
+- `num_obstacles` — static obstacle pillars (default 3)
+- `target_alt_randomize` — variable target elevation (1.0–3.0m)
 
-Key settings:
-- `ent_coef = 0.1` — fixed entropy to prevent collapse (was "auto" → collapsed to 0.003)
-- Manual observation normalization in GPU kernels (pos/4, vel/5, rel/6) — replaced VecNormalize which caused train/eval mismatch
+**TrainConfig** — SAC hyperparameters:
+- `ent_coef = 0.1` — fixed entropy (auto collapsed to 0.003)
+- `net_arch = [512, 512, 256]` — 3-layer MLP
+- Manual observation normalization in GPU kernels (pos/4, vel/5, rel/6)
 - Early stopping after 100 evals with no improvement
+
+## Domain Randomization
+
+Both 1v1 and swarm environments support:
+- **Wind**: Random force vectors applied to all drones, direction changes periodically
+- **Observation noise**: Gaussian noise on all observation dimensions
+- **Variable target altitude**: Target height randomized 1.0–3.0m each episode
+- **Obstacle layout**: Obstacles re-randomized each episode with minimum spacing
+
+```bash
+# 1v1 with domain randomization (via config)
+# Swarm with all randomization
+python -m train.train_swarm --defenders 2 --attackers 2 --wind --wind-force 0.3 --noise 0.02
+```
 
 ## Roadmap
 
@@ -166,7 +220,13 @@ Key settings:
 - [x] GPU-accelerated physics (Newton/Warp — 256 parallel envs)
 - [x] Velocity-based control (sim-to-real compatible)
 - [x] Mixture-of-opponents training (prevents adversarial overfitting)
-- [ ] Domain randomization (wind, noise, latency)
+- [x] Multi-drone swarm (NvM with CTDE parameter sharing)
+- [x] Domain randomization (wind, observation noise)
+- [x] Static obstacles with proximity penalties
+- [x] Variable target altitude (1.0–3.0m)
+- [x] 250g drone mass (realistic Crazyflie weight)
+- [ ] Dynamic/moving obstacles
+- [ ] Swarm adversarial co-training (train NvM attacker)
 - [ ] Sim-to-real transfer with Crazyflie hardware
 
 ## Tech Stack
@@ -174,3 +234,4 @@ Key settings:
 - **Physics**: Newton/NVIDIA Warp (GPU)
 - **RL**: Stable Baselines3 (SAC)
 - **Hardware**: NVIDIA DGX Spark (GB10 GPU, 128GB)
+- **Game**: Pygame (isometric visualization)
