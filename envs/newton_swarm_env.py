@@ -214,7 +214,13 @@ class NewtonSwarmEnv(VecEnv):
         self.num_worlds = num_worlds
         self.N = self.cfg.num_defenders  # defenders per world
         self.M = self.cfg.num_attackers  # attackers per world
-        self.n_envs = num_worlds * self.N  # SB3 sees this many "envs"
+        # In evade mode, RL controls attackers; in intercept mode, RL controls defenders
+        if self.cfg.mode == "evade":
+            self.n_envs = num_worlds * self.M  # SB3 sees M attackers per world
+            self.rl_agents_per_world = self.M
+        else:
+            self.n_envs = num_worlds * self.N  # SB3 sees N defenders per world
+            self.rl_agents_per_world = self.N
         self.num_envs = self.n_envs
 
         self.mode = self.cfg.mode
@@ -294,11 +300,11 @@ class NewtonSwarmEnv(VecEnv):
         self.drone_vel = wp.zeros(num_worlds * self._num_drones,
                                   dtype=wp.vec3, device=self.device)
         self.obs_buf = np.zeros((self.n_envs, OBS_DIM), dtype=np.float32)
-        self.prev_vel = np.zeros((num_worlds, self.N, 3), dtype=np.float32)
+        self.prev_vel = np.zeros((num_worlds, self.rl_agents_per_world, 3), dtype=np.float32)
 
         # Per-world state
         self.step_count_buf = wp.zeros(num_worlds, dtype=int, device=self.device)
-        self.prev_dist_buf = np.zeros((num_worlds, self.N), dtype=np.float32)
+        self.prev_dist_buf = np.zeros((num_worlds, self.rl_agents_per_world), dtype=np.float32)
         self.eliminated_attackers = np.zeros((num_worlds, self.M), dtype=bool)
 
         # Init positions buffer
@@ -313,9 +319,13 @@ class NewtonSwarmEnv(VecEnv):
         self.wind_force = np.zeros((num_worlds, 3), dtype=np.float32)
         self.wind_step_counter = 0
 
-        # Load frozen attacker models
+        # Load frozen opponent models
         self.attacker_models = []
-        if self.cfg.attacker_model_path:
+        self.defender_model = None
+        if self.mode == "evade" and self.cfg.defender_model_path:
+            from stable_baselines3 import SAC
+            self.defender_model = SAC.load(self.cfg.defender_model_path, device="cpu")
+        elif self.cfg.attacker_model_path:
             from stable_baselines3 import SAC
             m = SAC.load(self.cfg.attacker_model_path, device="cpu")
             self.attacker_models = [m]
@@ -345,22 +355,28 @@ class NewtonSwarmEnv(VecEnv):
         self._actions = np.asarray(actions, dtype=np.float32)
 
     def step_wait(self):
-        actions = self._actions  # (n_envs, 3) = (num_worlds * N, 3)
-
-        # Reshape actions to (num_worlds, N, 3)
-        act_per_world = actions.reshape(self.num_worlds, self.N, 3)
+        actions = self._actions  # (n_envs, 3)
 
         # Build velocity array for all drones: (num_worlds * (N+M), 3)
         vel_np = np.zeros((self.num_worlds * self._num_drones, 3), dtype=np.float32)
 
-        # Set defender velocities from actions
-        for w in range(self.num_worlds):
-            for d in range(self.N):
-                idx = w * self._num_drones + d
-                vel_np[idx] = act_per_world[w, d] * self.defender_speed_limit
-
-        # Compute attacker velocities
-        self._compute_attacker_velocities(vel_np)
+        if self.mode == "evade":
+            # RL controls attackers, frozen model controls defenders
+            act_per_world = actions.reshape(self.num_worlds, self.M, 3)
+            for w in range(self.num_worlds):
+                for a in range(self.M):
+                    idx = w * self._num_drones + self.N + a
+                    if not self.eliminated_attackers[w, a]:
+                        vel_np[idx] = act_per_world[w, a] * self.attacker_speed_limit
+            self._compute_defender_velocities(vel_np)
+        else:
+            # RL controls defenders, scripted/frozen attackers
+            act_per_world = actions.reshape(self.num_worlds, self.N, 3)
+            for w in range(self.num_worlds):
+                for d in range(self.N):
+                    idx = w * self._num_drones + d
+                    vel_np[idx] = act_per_world[w, d] * self.defender_speed_limit
+            self._compute_attacker_velocities(vel_np)
 
         # Set velocity buffer
         self.drone_vel = wp.array(
@@ -437,9 +453,9 @@ class NewtonSwarmEnv(VecEnv):
         # Compute observations
         self._compute_obs()
 
-        # Expand world dones to per-defender dones
-        per_agent_dones = np.repeat(world_dones, self.N).astype(bool)
-        per_agent_rewards = rewards  # already (num_worlds * N,)
+        # Expand world dones to per-agent dones
+        per_agent_dones = np.repeat(world_dones, self.rl_agents_per_world).astype(bool)
+        per_agent_rewards = rewards  # already (num_worlds * rl_agents_per_world,)
 
         return self.obs_buf.copy(), per_agent_rewards, per_agent_dones, infos
 
@@ -447,8 +463,32 @@ class NewtonSwarmEnv(VecEnv):
         """Set attacker velocities — scripted pursuit or frozen RL model."""
         wp.synchronize()
 
+        if self.attacker_models:
+            # Use frozen RL attacker model — build attacker obs and predict
+            self._compute_obs_for_attackers()
+            model = self.attacker_models[0]  # use first model for all
+            actions, _ = model.predict(self._attacker_obs, deterministic=True)
+            for w in range(self.num_worlds):
+                for a in range(self.M):
+                    idx = w * self._num_drones + self.N + a
+                    agent_idx = w * self.M + a
+                    if not self.eliminated_attackers[w, a]:
+                        vel_np[idx] = actions[agent_idx] * self.attacker_speed_limit
+            return
+
+        strategy = self.cfg.attacker_strategy
+
+        if strategy == "flanking" and self.M > 1:
+            self._compute_flanking_attacker_velocities(vel_np)
+        elif strategy == "mixed" and self.M > 1:
+            self._compute_mixed_attacker_velocities(vel_np)
+        else:
+            # Direct pursuit (default)
+            self._compute_direct_attacker_velocities(vel_np)
+
+    def _compute_direct_attacker_velocities(self, vel_np):
+        """All attackers beeline toward target."""
         for a in range(self.M):
-            # Scripted pursuit for each attacker
             temp_vel = wp.zeros(self.num_worlds, dtype=wp.vec3, device=self.device)
             wp.launch(
                 attacker_pursuit_multi,
@@ -468,10 +508,269 @@ class NewtonSwarmEnv(VecEnv):
                 idx = w * self._num_drones + self.N + a
                 if not self.eliminated_attackers[w, a]:
                     vel_np[idx] = scripted[w]
-                # eliminated attackers keep zero velocity
+
+    def _compute_flanking_attacker_velocities(self, vel_np):
+        """Attackers approach target from spread-out angles to overwhelm defenders.
+
+        Each attacker aims for a waypoint offset from the target, converging
+        only when close. This forces defenders to split up.
+        """
+        body_q = self.state_0.body_q.numpy()
+        target = self.target_pos_np
+
+        for w in range(self.num_worlds):
+            # Count active attackers for angle spacing
+            active = [a for a in range(self.M) if not self.eliminated_attackers[w, a]]
+            if not active:
+                continue
+
+            for i, a in enumerate(active):
+                bidx = w * self.bodies_per_world + self.N + a
+                att_pos = body_q[bidx][:3]
+                dist_to_target = np.linalg.norm(att_pos - target)
+
+                if dist_to_target < 1.0:
+                    # Close enough — go direct
+                    direction = target - att_pos
+                    d = np.linalg.norm(direction)
+                    if d > 0.01:
+                        direction = direction / d
+                else:
+                    # Flanking: each attacker takes a different angular offset
+                    angle_offset = (2 * np.pi * i / len(active))
+                    flank_radius = min(1.5, dist_to_target * 0.4)
+                    waypoint = target.copy()
+                    waypoint[0] += flank_radius * np.cos(angle_offset)
+                    waypoint[1] += flank_radius * np.sin(angle_offset)
+
+                    direction = waypoint - att_pos
+                    d = np.linalg.norm(direction)
+                    if d > 0.01:
+                        direction = direction / d
+
+                idx = w * self._num_drones + self.N + a
+                vel_np[idx] = direction * self.attacker_speed
+
+    def _compute_mixed_attacker_velocities(self, vel_np):
+        """Mixed strategy: first attacker flanks, rest go direct. Randomized per reset.
+
+        In multi-attacker scenarios, a mix of direct and flanking creates
+        harder-to-predict attack patterns for the defender.
+        """
+        body_q = self.state_0.body_q.numpy()
+        target = self.target_pos_np
+
+        for w in range(self.num_worlds):
+            for a in range(self.M):
+                if self.eliminated_attackers[w, a]:
+                    continue
+
+                bidx = w * self.bodies_per_world + self.N + a
+                att_pos = body_q[bidx][:3]
+                dist_to_target = np.linalg.norm(att_pos - target)
+
+                # Even-indexed attackers flank, odd go direct
+                if a % 2 == 0 and dist_to_target > 1.0:
+                    angle_offset = (2 * np.pi * a / self.M) + np.pi / 4
+                    flank_radius = min(1.5, dist_to_target * 0.4)
+                    waypoint = target.copy()
+                    waypoint[0] += flank_radius * np.cos(angle_offset)
+                    waypoint[1] += flank_radius * np.sin(angle_offset)
+                    direction = waypoint - att_pos
+                else:
+                    direction = target - att_pos
+
+                d = np.linalg.norm(direction)
+                if d > 0.01:
+                    direction = direction / d
+
+                idx = w * self._num_drones + self.N + a
+                vel_np[idx] = direction * self.attacker_speed
+
+    def _compute_defender_velocities(self, vel_np):
+        """Set defender velocities from frozen model (evade mode)."""
+        if self.defender_model is None:
+            # No frozen defender — scripted pursuit toward nearest attacker
+            wp.synchronize()
+            body_q = self.state_0.body_q.numpy()
+            for w in range(self.num_worlds):
+                for d in range(self.N):
+                    bidx = w * self.bodies_per_world + d
+                    def_pos = body_q[bidx][:3]
+                    # Find nearest active attacker
+                    min_dist = float('inf')
+                    nearest_att_pos = None
+                    for a in range(self.M):
+                        if self.eliminated_attackers[w, a]:
+                            continue
+                        abidx = w * self.bodies_per_world + self.N + a
+                        att_pos = body_q[abidx][:3]
+                        dist = np.linalg.norm(def_pos - att_pos)
+                        if dist < min_dist:
+                            min_dist = dist
+                            nearest_att_pos = att_pos
+                    if nearest_att_pos is not None and min_dist > 0.01:
+                        direction = nearest_att_pos - def_pos
+                        direction = direction / np.linalg.norm(direction)
+                        idx = w * self._num_drones + d
+                        vel_np[idx] = direction * self.defender_speed_limit
+            return
+
+        # Use frozen RL model — build defender observations and predict
+        self._compute_obs_for_defenders()
+        actions, _ = self.defender_model.predict(self._defender_obs, deterministic=True)
+        for w in range(self.num_worlds):
+            for d in range(self.N):
+                idx = w * self._num_drones + d
+                agent_idx = w * self.N + d
+                vel_np[idx] = actions[agent_idx] * self.defender_speed_limit
+
+    def _compute_obs_for_defenders(self):
+        """Build observations for frozen defender model (intercept-mode obs format)."""
+        wp.synchronize()
+        body_q = self.state_0.body_q.numpy()
+        body_qd = self.state_0.body_qd.numpy()
+
+        pos_scale = 0.25
+        vel_scale = 0.2
+        rel_scale = 1.0 / 6.0
+
+        t = self.target_pos_wp
+        target = np.array([float(t[0]), float(t[1]), float(t[2])], dtype=np.float32)
+
+        self._defender_obs = np.zeros((self.num_worlds * self.N, OBS_DIM), dtype=np.float32)
+
+        for w in range(self.num_worlds):
+            positions = []
+            velocities = []
+            for i in range(self._num_drones):
+                bidx = w * self.bodies_per_world + i
+                positions.append(body_q[bidx][:3].astype(np.float32))
+                velocities.append(body_qd[bidx][:3].astype(np.float32))
+
+            for d in range(self.N):
+                agent_idx = w * self.N + d
+                obs = np.zeros(OBS_DIM, dtype=np.float32)
+                my_pos = positions[d]
+                my_vel = velocities[d]
+
+                obs[0:3] = my_pos * pos_scale
+                obs[3:6] = my_vel * vel_scale
+                obs[10:13] = target * pos_scale
+
+                # Attackers sorted by distance
+                att_dists = []
+                for a in range(self.M):
+                    att_pos = positions[self.N + a]
+                    dist = np.linalg.norm(my_pos - att_pos) if not self.eliminated_attackers[w, a] else 999.0
+                    att_dists.append((dist, a))
+                att_dists.sort()
+
+                for k in range(min(self.M, MAX_ATTACKERS)):
+                    dist, a = att_dists[k]
+                    base = 13 + k * 7
+                    if not self.eliminated_attackers[w, a]:
+                        obs[base:base+3] = positions[self.N + a] * pos_scale
+                        obs[base+3:base+6] = velocities[self.N + a] * vel_scale
+                        obs[base+6] = dist * rel_scale
+
+                # Teammates
+                tm_dists = []
+                for d2 in range(self.N):
+                    if d2 == d:
+                        continue
+                    dist = np.linalg.norm(my_pos - positions[d2])
+                    tm_dists.append((dist, d2))
+                tm_dists.sort()
+
+                for k in range(min(self.N - 1, MAX_DEFENDERS - 1)):
+                    dist, d2 = tm_dists[k]
+                    base = 34 + k * 7
+                    obs[base:base+3] = positions[d2] * pos_scale
+                    obs[base+3:base+6] = velocities[d2] * vel_scale
+                    obs[base+6] = dist * rel_scale
+
+                if self._num_obstacles > 0:
+                    obs_pos = self.obstacle_pos_buf.numpy()
+                    for o in range(self._num_obstacles):
+                        base = 48 + o * 3
+                        obs[base:base+3] = (obs_pos[w][o] - my_pos) * rel_scale
+
+                self._defender_obs[agent_idx] = obs
+
+    def _compute_obs_for_attackers(self):
+        """Build attacker-centric observations for frozen attacker model."""
+        wp.synchronize()
+        body_q = self.state_0.body_q.numpy()
+        body_qd = self.state_0.body_qd.numpy()
+
+        pos_scale = 0.25
+        vel_scale = 0.2
+        rel_scale = 1.0 / 6.0
+
+        t = self.target_pos_wp
+        target = np.array([float(t[0]), float(t[1]), float(t[2])], dtype=np.float32)
+
+        self._attacker_obs = np.zeros((self.num_worlds * self.M, OBS_DIM), dtype=np.float32)
+
+        for w in range(self.num_worlds):
+            positions = []
+            velocities = []
+            for i in range(self._num_drones):
+                bidx = w * self.bodies_per_world + i
+                positions.append(body_q[bidx][:3].astype(np.float32))
+                velocities.append(body_qd[bidx][:3].astype(np.float32))
+
+            for a in range(self.M):
+                agent_idx = w * self.M + a
+                obs = np.zeros(OBS_DIM, dtype=np.float32)
+                my_pos = positions[self.N + a]
+                my_vel = velocities[self.N + a]
+
+                obs[0:3] = my_pos * pos_scale
+                obs[3:6] = my_vel * vel_scale
+                obs[10:13] = target * pos_scale
+
+                # Defenders as "opponents" sorted by distance
+                def_dists = []
+                for d in range(self.N):
+                    dist = np.linalg.norm(my_pos - positions[d])
+                    def_dists.append((dist, d))
+                def_dists.sort()
+
+                for k in range(min(self.N, MAX_ATTACKERS)):
+                    dist, d = def_dists[k]
+                    base = 13 + k * 7
+                    obs[base:base+3] = positions[d] * pos_scale
+                    obs[base+3:base+6] = velocities[d] * vel_scale
+                    obs[base+6] = dist * rel_scale
+
+                # Teammate attackers
+                tm_dists = []
+                for a2 in range(self.M):
+                    if a2 == a or self.eliminated_attackers[w, a2]:
+                        continue
+                    dist = np.linalg.norm(my_pos - positions[self.N + a2])
+                    tm_dists.append((dist, a2))
+                tm_dists.sort()
+
+                for k in range(min(len(tm_dists), MAX_DEFENDERS - 1)):
+                    dist, a2 = tm_dists[k]
+                    base = 34 + k * 7
+                    obs[base:base+3] = positions[self.N + a2] * pos_scale
+                    obs[base+3:base+6] = velocities[self.N + a2] * vel_scale
+                    obs[base+6] = dist * rel_scale
+
+                if self._num_obstacles > 0:
+                    obs_pos = self.obstacle_pos_buf.numpy()
+                    for o in range(self._num_obstacles):
+                        base = 48 + o * 3
+                        obs[base:base+3] = (obs_pos[w][o] - my_pos) * rel_scale
+
+                self._attacker_obs[agent_idx] = obs
 
     def _compute_rewards_and_dones(self):
-        """Compute per-defender rewards and check intercept/target-reached."""
+        """Compute per-agent rewards and check intercept/target-reached."""
         wp.synchronize()
         body_q = self.state_0.body_q.numpy()
         body_qd = self.state_0.body_qd.numpy()
@@ -480,10 +779,11 @@ class NewtonSwarmEnv(VecEnv):
         world_dones = np.zeros(self.num_worlds, dtype=int)
         infos = [{} for _ in range(self.n_envs)]
 
-        target = self.target_pos_np.copy()
-        # Use current (possibly randomized) target
         t = self.target_pos_wp
         target = np.array([float(t[0]), float(t[1]), float(t[2])], dtype=np.float32)
+
+        # Hoist obstacle positions out of inner loops (avoid repeated GPU→CPU transfers)
+        obs_pos_np = self.obstacle_pos_buf.numpy() if self._num_obstacles > 0 else None
 
         for w in range(self.num_worlds):
             # Get all positions
@@ -495,9 +795,11 @@ class NewtonSwarmEnv(VecEnv):
                 def_velocities.append(body_qd[bidx][:3])
 
             att_positions = []
+            att_velocities = []
             for a in range(self.M):
                 bidx = w * self.bodies_per_world + self.N + a
                 att_positions.append(body_q[bidx][:3])
+                att_velocities.append(body_qd[bidx][:3])
 
             any_intercept = False
             any_target_reached = False
@@ -520,79 +822,166 @@ class NewtonSwarmEnv(VecEnv):
                 if dist_to_target < self.cfg.target_reached_dist:
                     any_target_reached = True
 
-            # Check if all attackers eliminated
             all_eliminated = np.all(self.eliminated_attackers[w])
 
-            # Per-defender rewards
-            for d in range(self.N):
-                agent_idx = w * self.N + d
-                reward = 0.0
-
-                if any_intercept:
-                    reward += 100.0  # team intercept bonus
-
-                if any_target_reached:
-                    reward -= 200.0  # team failure penalty
-
-                if all_eliminated:
-                    reward += 200.0  # mission complete bonus
-                    world_dones[w] = 1
-
-                if any_target_reached:
-                    world_dones[w] = 1
-
-                # Dense reward: approach nearest active attacker
-                min_dist = float('inf')
+            if self.mode == "evade":
+                # --- Attacker rewards (evade mode) ---
                 for a in range(self.M):
-                    if self.eliminated_attackers[w, a]:
-                        continue
-                    dist = np.linalg.norm(def_positions[d] - att_positions[a])
-                    if dist < min_dist:
-                        min_dist = dist
+                    agent_idx = w * self.M + a
+                    reward = 0.0
 
-                if min_dist < float('inf'):
-                    prev = self.prev_dist_buf[w, d]
-                    if prev > 0:
-                        reward += (prev - min_dist) * 50.0
-                    self.prev_dist_buf[w, d] = min_dist
+                    if any_target_reached:
+                        reward += 200.0  # team success: reached target
+                    if any_intercept:
+                        reward -= 100.0  # team penalty: got intercepted
 
-                    # Proximity bonus
-                    reward += 1.0 / (min_dist + 0.1) - 1.0 / (4.0 + 0.1)
+                    if all_eliminated:
+                        reward -= 200.0  # mission failure
+                        world_dones[w] = 1
+                    if any_target_reached:
+                        world_dones[w] = 1
 
-                # Coordination: reward spread between defenders
-                if self.N > 1:
-                    for d2 in range(self.N):
-                        if d2 != d:
-                            dd = np.linalg.norm(def_positions[d] - def_positions[d2])
-                            reward += self.cfg.coordination_bonus * min(dd, 2.0)
+                    # Dense reward: approach target
+                    if not self.eliminated_attackers[w, a]:
+                        dist_to_target = np.linalg.norm(att_positions[a] - target)
+                        prev = self.prev_dist_buf[w, a]
+                        if prev > 0:
+                            reward += (prev - dist_to_target) * 50.0
+                        self.prev_dist_buf[w, a] = dist_to_target
 
-                # Time penalty
-                reward -= 0.05
+                        # Evasion bonus: distance from nearest defender
+                        min_def_dist = float('inf')
+                        for d in range(self.N):
+                            dd = np.linalg.norm(att_positions[a] - def_positions[d])
+                            if dd < min_def_dist:
+                                min_def_dist = dd
+                        if min_def_dist < 2.0:
+                            reward += (min_def_dist - 0.5) * 5.0  # reward staying away
 
-                # Obstacle penalties
-                if self._num_obstacles > 0:
-                    obs_pos = self.obstacle_pos_buf.numpy()
-                    for o in range(self._num_obstacles):
-                        opos = obs_pos[w][o]
-                        odist = np.linalg.norm(def_positions[d] - opos)
-                        if odist < self.cfg.obstacle_collision_radius:
-                            reward -= self.cfg.obstacle_collision_penalty
-                        elif odist < self.cfg.obstacle_danger_radius:
-                            reward -= (self.cfg.obstacle_danger_radius - odist) * self.cfg.obstacle_proximity_penalty
+                    # Time penalty (slight urgency)
+                    reward -= 0.05
 
-                rewards[agent_idx] = reward
+                    # Obstacle penalties for attackers too
+                    if obs_pos_np is not None and not self.eliminated_attackers[w, a]:
+                        for o in range(self._num_obstacles):
+                            opos = obs_pos_np[w][o]
+                            odist = np.linalg.norm(att_positions[a] - opos)
+                            if odist < self.cfg.obstacle_collision_radius:
+                                reward -= self.cfg.obstacle_collision_penalty
+                            elif odist < self.cfg.obstacle_danger_radius:
+                                reward -= (self.cfg.obstacle_danger_radius - odist) * self.cfg.obstacle_proximity_penalty
 
-                infos[agent_idx] = {
-                    "intercepted": int(any_intercept),
-                    "target_reached": int(any_target_reached),
-                    "all_eliminated": int(all_eliminated),
-                    "active_attackers": int(self.M - np.sum(self.eliminated_attackers[w])),
-                }
+                    rewards[agent_idx] = reward
+                    infos[agent_idx] = {
+                        "intercepted": int(any_intercept),
+                        "target_reached": int(any_target_reached),
+                        "all_eliminated": int(all_eliminated),
+                        "active_attackers": int(self.M - np.sum(self.eliminated_attackers[w])),
+                    }
+            else:
+                # --- Defender rewards (intercept mode) ---
+
+                # Pre-compute target assignments for diversity bonus
+                active_attackers = [a for a in range(self.M) if not self.eliminated_attackers[w, a]]
+                nearest_attacker = []  # which attacker each defender is nearest to
+                for d in range(self.N):
+                    best_a = -1
+                    best_dist = float('inf')
+                    for a in active_attackers:
+                        dist = np.linalg.norm(def_positions[d] - att_positions[a])
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_a = a
+                    nearest_attacker.append(best_a)
+
+                # Count how many defenders target each attacker
+                assignment_counts = {}
+                for a_id in nearest_attacker:
+                    if a_id >= 0:
+                        assignment_counts[a_id] = assignment_counts.get(a_id, 0) + 1
+                # Diversity: bonus if each defender targets a different attacker
+                unique_targets = len(assignment_counts)
+                n_active = len(active_attackers)
+
+                for d in range(self.N):
+                    agent_idx = w * self.N + d
+                    reward = 0.0
+
+                    if any_intercept:
+                        reward += 100.0
+                    if any_target_reached:
+                        reward -= 200.0
+                    if all_eliminated:
+                        reward += 200.0
+                        world_dones[w] = 1
+                    if any_target_reached:
+                        world_dones[w] = 1
+
+                    # Dense reward: approach nearest active attacker
+                    min_dist = float('inf')
+                    # Track most-threatening attacker (closest to target)
+                    min_att_to_target = float('inf')
+                    dist_to_priority = float('inf')
+                    for a in active_attackers:
+                        dist = np.linalg.norm(def_positions[d] - att_positions[a])
+                        if dist < min_dist:
+                            min_dist = dist
+                        att_to_target = np.linalg.norm(att_positions[a] - target)
+                        if att_to_target < min_att_to_target:
+                            min_att_to_target = att_to_target
+                            dist_to_priority = dist
+
+                    if min_dist < float('inf'):
+                        prev = self.prev_dist_buf[w, d]
+                        if prev > 0:
+                            reward += (prev - min_dist) * 50.0
+                        self.prev_dist_buf[w, d] = min_dist
+                        reward += 1.0 / (min_dist + 0.1) - 1.0 / (4.0 + 0.1)
+
+                    # Priority targeting bonus: extra reward for approaching the
+                    # attacker closest to target (most dangerous)
+                    if dist_to_priority < float('inf') and dist_to_priority < 2.0:
+                        reward += (2.0 - dist_to_priority) * 0.5
+
+                    # Coordination: reward spread between defenders
+                    if self.N > 1:
+                        for d2 in range(self.N):
+                            if d2 != d:
+                                dd = np.linalg.norm(def_positions[d] - def_positions[d2])
+                                reward += self.cfg.coordination_bonus * min(dd, 2.0)
+
+                    # Target assignment diversity: penalize when this defender
+                    # shares a target with another defender while attackers go unguarded
+                    if self.N > 1 and n_active >= 2:
+                        my_target = nearest_attacker[d]
+                        if my_target >= 0 and assignment_counts.get(my_target, 0) > 1:
+                            # Multiple defenders on same attacker — small penalty
+                            reward -= 0.3
+
+                    reward -= 0.05
+
+                    # Obstacle penalties
+                    if obs_pos_np is not None:
+                        for o in range(self._num_obstacles):
+                            opos = obs_pos_np[w][o]
+                            odist = np.linalg.norm(def_positions[d] - opos)
+                            if odist < self.cfg.obstacle_collision_radius:
+                                reward -= self.cfg.obstacle_collision_penalty
+                            elif odist < self.cfg.obstacle_danger_radius:
+                                reward -= (self.cfg.obstacle_danger_radius - odist) * self.cfg.obstacle_proximity_penalty
+
+                    rewards[agent_idx] = reward
+                    infos[agent_idx] = {
+                        "intercepted": int(any_intercept),
+                        "target_reached": int(any_target_reached),
+                        "all_eliminated": int(all_eliminated),
+                        "active_attackers": int(self.M - np.sum(self.eliminated_attackers[w])),
+                    }
 
         return rewards, world_dones, infos
 
     def _compute_obs(self):
-        """Build per-defender observations with distance-sorted attackers/teammates."""
+        """Build per-agent observations with distance-sorted opponents/teammates."""
         wp.synchronize()
         body_q = self.state_0.body_q.numpy()
         body_qd = self.state_0.body_qd.numpy()
@@ -604,8 +993,10 @@ class NewtonSwarmEnv(VecEnv):
         t = self.target_pos_wp
         target = np.array([float(t[0]), float(t[1]), float(t[2])], dtype=np.float32)
 
+        # Hoist obstacle positions out of inner loops
+        obs_pos_np = self.obstacle_pos_buf.numpy() if self._num_obstacles > 0 else None
+
         for w in range(self.num_worlds):
-            # Gather all drone data
             positions = []
             velocities = []
             for i in range(self._num_drones):
@@ -613,87 +1004,153 @@ class NewtonSwarmEnv(VecEnv):
                 positions.append(body_q[bidx][:3].astype(np.float32))
                 velocities.append(body_qd[bidx][:3].astype(np.float32))
 
-            for d in range(self.N):
-                agent_idx = w * self.N + d
-                obs = np.zeros(OBS_DIM, dtype=np.float32)
-
-                my_pos = positions[d]
-                my_vel = velocities[d]
-
-                # Self state [0:9]
-                obs[0:3] = my_pos * pos_scale
-                obs[3:6] = my_vel * vel_scale
-                # Acceleration [6:9]
-                acc = my_vel - self.prev_vel[w, d]
-                obs[6:9] = acc * vel_scale
-                self.prev_vel[w, d] = my_vel.copy()
-
-                # Closing rate to nearest attacker [9]
-                min_att_dist = float('inf')
+            if self.mode == "evade":
+                # Attacker-centric observations
+                # Obs layout reuses same 57-dim format but from attacker perspective:
+                # [0:3] self pos, [3:6] self vel, [6:9] accel, [9] closing rate to nearest defender
+                # [10:13] target pos
+                # [13:34] per-defender block (3 max, sorted by distance) — "opponents" are defenders
+                # [34:48] per-teammate block (other attackers, 2 max)
+                # [48:57] obstacles
                 for a in range(self.M):
-                    if self.eliminated_attackers[w, a]:
-                        continue
-                    att_pos = positions[self.N + a]
-                    dist = np.linalg.norm(my_pos - att_pos)
-                    if dist < min_att_dist:
-                        min_att_dist = dist
-                        att_vel = velocities[self.N + a]
-                        rel = att_pos - my_pos
-                        if dist > 0.01:
-                            closing = np.dot(my_vel - att_vel, rel / dist)
-                            obs[9] = closing * vel_scale
+                    agent_idx = w * self.M + a
+                    obs = np.zeros(OBS_DIM, dtype=np.float32)
 
-                # Target position [10:13]
-                obs[10:13] = target * pos_scale
+                    my_pos = positions[self.N + a]
+                    my_vel = velocities[self.N + a]
 
-                # Per-attacker block [13:34] (sorted by distance)
-                att_dists = []
-                for a in range(self.M):
-                    att_pos = positions[self.N + a]
-                    dist = np.linalg.norm(my_pos - att_pos) if not self.eliminated_attackers[w, a] else 999.0
-                    att_dists.append((dist, a))
-                att_dists.sort()
+                    obs[0:3] = my_pos * pos_scale
+                    obs[3:6] = my_vel * vel_scale
+                    acc = my_vel - self.prev_vel[w, a]
+                    obs[6:9] = acc * vel_scale
+                    self.prev_vel[w, a] = my_vel.copy()
 
-                for k in range(min(self.M, MAX_ATTACKERS)):
-                    dist, a = att_dists[k]
-                    base = 13 + k * 7
-                    if not self.eliminated_attackers[w, a]:
-                        att_pos = positions[self.N + a]
-                        att_vel = velocities[self.N + a]
-                        obs[base:base+3] = att_pos * pos_scale
-                        obs[base+3:base+6] = att_vel * vel_scale
+                    # Closing rate to nearest defender [9]
+                    min_def_dist = float('inf')
+                    for d in range(self.N):
+                        def_pos = positions[d]
+                        dist = np.linalg.norm(my_pos - def_pos)
+                        if dist < min_def_dist:
+                            min_def_dist = dist
+                            def_vel = velocities[d]
+                            rel = def_pos - my_pos
+                            if dist > 0.01:
+                                closing = np.dot(my_vel - def_vel, rel / dist)
+                                obs[9] = closing * vel_scale
+
+                    obs[10:13] = target * pos_scale
+
+                    # Per-defender block [13:34] — "opponents" sorted by distance
+                    def_dists = []
+                    for d in range(self.N):
+                        dist = np.linalg.norm(my_pos - positions[d])
+                        def_dists.append((dist, d))
+                    def_dists.sort()
+
+                    for k in range(min(self.N, MAX_ATTACKERS)):
+                        dist, d = def_dists[k]
+                        base = 13 + k * 7
+                        obs[base:base+3] = positions[d] * pos_scale
+                        obs[base+3:base+6] = velocities[d] * vel_scale
                         obs[base+6] = dist * rel_scale
 
-                # Per-teammate block [34:48] (sorted by distance)
-                tm_dists = []
-                for d2 in range(self.N):
-                    if d2 == d:
-                        continue
-                    tm_pos = positions[d2]
-                    dist = np.linalg.norm(my_pos - tm_pos)
-                    tm_dists.append((dist, d2))
-                tm_dists.sort()
+                    # Per-teammate block [34:48] — other attackers
+                    tm_dists = []
+                    for a2 in range(self.M):
+                        if a2 == a:
+                            continue
+                        if self.eliminated_attackers[w, a2]:
+                            continue
+                        dist = np.linalg.norm(my_pos - positions[self.N + a2])
+                        tm_dists.append((dist, a2))
+                    tm_dists.sort()
 
-                for k in range(min(self.N - 1, MAX_DEFENDERS - 1)):
-                    dist, d2 = tm_dists[k]
-                    base = 34 + k * 7
-                    obs[base:base+3] = positions[d2] * pos_scale
-                    obs[base+3:base+6] = velocities[d2] * vel_scale
-                    obs[base+6] = dist * rel_scale
+                    for k in range(min(len(tm_dists), MAX_DEFENDERS - 1)):
+                        dist, a2 = tm_dists[k]
+                        base = 34 + k * 7
+                        obs[base:base+3] = positions[self.N + a2] * pos_scale
+                        obs[base+3:base+6] = velocities[self.N + a2] * vel_scale
+                        obs[base+6] = dist * rel_scale
 
-                # Obstacle block [48:57]
-                if self._num_obstacles > 0:
-                    obs_pos = self.obstacle_pos_buf.numpy()
-                    for o in range(self._num_obstacles):
-                        base = 48 + o * 3
-                        orel = obs_pos[w][o] - my_pos
-                        obs[base:base+3] = orel * rel_scale
+                    if obs_pos_np is not None:
+                        for o in range(self._num_obstacles):
+                            base = 48 + o * 3
+                            obs[base:base+3] = (obs_pos_np[w][o] - my_pos) * rel_scale
 
-                # Add observation noise
-                if self.obs_noise_std > 0:
-                    obs += np.random.normal(0, self.obs_noise_std, OBS_DIM).astype(np.float32)
+                    if self.obs_noise_std > 0:
+                        obs += np.random.normal(0, self.obs_noise_std, OBS_DIM).astype(np.float32)
 
-                self.obs_buf[agent_idx] = obs
+                    self.obs_buf[agent_idx] = obs
+            else:
+                # Defender-centric observations (original)
+                for d in range(self.N):
+                    agent_idx = w * self.N + d
+                    obs = np.zeros(OBS_DIM, dtype=np.float32)
+
+                    my_pos = positions[d]
+                    my_vel = velocities[d]
+
+                    obs[0:3] = my_pos * pos_scale
+                    obs[3:6] = my_vel * vel_scale
+                    acc = my_vel - self.prev_vel[w, d]
+                    obs[6:9] = acc * vel_scale
+                    self.prev_vel[w, d] = my_vel.copy()
+
+                    min_att_dist = float('inf')
+                    for a in range(self.M):
+                        if self.eliminated_attackers[w, a]:
+                            continue
+                        att_pos = positions[self.N + a]
+                        dist = np.linalg.norm(my_pos - att_pos)
+                        if dist < min_att_dist:
+                            min_att_dist = dist
+                            att_vel = velocities[self.N + a]
+                            rel = att_pos - my_pos
+                            if dist > 0.01:
+                                closing = np.dot(my_vel - att_vel, rel / dist)
+                                obs[9] = closing * vel_scale
+
+                    obs[10:13] = target * pos_scale
+
+                    att_dists = []
+                    for a in range(self.M):
+                        att_pos = positions[self.N + a]
+                        dist = np.linalg.norm(my_pos - att_pos) if not self.eliminated_attackers[w, a] else 999.0
+                        att_dists.append((dist, a))
+                    att_dists.sort()
+
+                    for k in range(min(self.M, MAX_ATTACKERS)):
+                        dist, a = att_dists[k]
+                        base = 13 + k * 7
+                        if not self.eliminated_attackers[w, a]:
+                            obs[base:base+3] = positions[self.N + a] * pos_scale
+                            obs[base+3:base+6] = velocities[self.N + a] * vel_scale
+                            obs[base+6] = dist * rel_scale
+
+                    tm_dists = []
+                    for d2 in range(self.N):
+                        if d2 == d:
+                            continue
+                        dist = np.linalg.norm(my_pos - positions[d2])
+                        tm_dists.append((dist, d2))
+                    tm_dists.sort()
+
+                    for k in range(min(self.N - 1, MAX_DEFENDERS - 1)):
+                        dist, d2 = tm_dists[k]
+                        base = 34 + k * 7
+                        obs[base:base+3] = positions[d2] * pos_scale
+                        obs[base+3:base+6] = velocities[d2] * vel_scale
+                        obs[base+6] = dist * rel_scale
+
+                    if obs_pos_np is not None:
+                        for o in range(self._num_obstacles):
+                            base = 48 + o * 3
+                            obs[base:base+3] = (obs_pos_np[w][o] - my_pos) * rel_scale
+
+                    if self.obs_noise_std > 0:
+                        obs += np.random.normal(0, self.obs_noise_std, OBS_DIM).astype(np.float32)
+
+                    self.obs_buf[agent_idx] = obs
 
     def _randomize_all(self):
         """Randomize all world positions."""

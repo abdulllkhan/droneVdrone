@@ -51,12 +51,14 @@ def train_swarm(args):
         wind_enabled=args.wind,
         wind_max_force=args.wind_force,
         obs_noise_std=args.noise,
+        attacker_strategy=args.strategy,
     )
 
     print(f"\n{'='*60}")
     print(f"  Swarm Training: {args.defenders}v{args.attackers}")
     print(f"  Worlds: {args.num_worlds} | Obstacles: {args.obstacles}")
     print(f"  Wind: {'ON' if args.wind else 'OFF'} | Noise: {args.noise}")
+    print(f"  Strategy: {args.strategy}")
     print(f"  Timesteps: {args.timesteps:,}")
     print(f"{'='*60}\n")
 
@@ -146,6 +148,9 @@ if __name__ == "__main__":
     parser.add_argument("--wind", action="store_true", help="Enable wind randomization")
     parser.add_argument("--wind-force", type=float, default=0.3, help="Max wind force (N)")
     parser.add_argument("--noise", type=float, default=0.0, help="Observation noise std")
+    parser.add_argument("--strategy", type=str, default="direct",
+                        choices=["direct", "flanking", "mixed"],
+                        help="Scripted attacker strategy")
     parser.add_argument("--resume", type=str, default="", help="Resume from model path")
     args = parser.parse_args()
 

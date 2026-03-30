@@ -458,13 +458,14 @@ class SwarmGame:
     """Watch N defenders vs M attackers (swarm mode)."""
 
     def __init__(self, defender_path=None, num_defenders=2, num_attackers=2,
-                 arena_size=8.0, obstacles=3):
+                 arena_size=8.0, obstacles=3, attacker_model_path=None,
+                 attacker_strategy="direct"):
         from envs.newton_swarm_env import NewtonSwarmEnv
 
         self.N = num_defenders
         self.M = num_attackers
 
-        cfg = EnvConfig(
+        cfg_kwargs = dict(
             mode="intercept",
             num_defenders=num_defenders,
             num_attackers=num_attackers,
@@ -476,7 +477,11 @@ class SwarmGame:
             altitude_min=0.3,
             altitude_max=4.0,
             num_obstacles=obstacles,
+            attacker_strategy=attacker_strategy,
         )
+        if attacker_model_path:
+            cfg_kwargs["attacker_model_path"] = attacker_model_path
+        cfg = EnvConfig(**cfg_kwargs)
         self.cfg = cfg
         self.env = NewtonSwarmEnv(num_worlds=1, config=cfg)
 
@@ -654,6 +659,11 @@ def main():
                         help="Number of defenders (swarm mode)")
     parser.add_argument("--attackers", type=int, default=2,
                         help="Number of attackers (swarm mode)")
+    parser.add_argument("--attacker-model", type=str, default=None,
+                        help="Path to RL attacker model (swarm mode)")
+    parser.add_argument("--strategy", type=str, default="direct",
+                        choices=["direct", "flanking", "mixed"],
+                        help="Scripted attacker strategy (swarm mode)")
     args = parser.parse_args()
 
     wp.init()
@@ -664,6 +674,8 @@ def main():
             num_defenders=args.defenders,
             num_attackers=args.attackers,
             arena_size=args.arena,
+            attacker_model_path=args.attacker_model,
+            attacker_strategy=args.strategy,
         )
     else:
         game = DroneGame(

@@ -779,6 +779,13 @@ class NewtonDroneEnv(VecEnv):
         if self._use_two_drones:
             self.drone1_vel = wp.zeros(num_envs, dtype=wp.vec3, device=device)
 
+        # Action delay buffer (simulates communication latency)
+        self._action_delay = self.cfg.action_delay_steps
+        if self._action_delay > 0:
+            self._action_queue = np.zeros(
+                (self._action_delay, num_envs, self.ACT_DIM), dtype=np.float32
+            )
+
         # Target positions for fly_to_target / chase modes
         self.target_positions = wp.zeros(num_envs, dtype=wp.vec3, device=device)
         self.target_velocities = wp.zeros(num_envs, dtype=wp.vec3, device=device)
@@ -853,7 +860,14 @@ class NewtonDroneEnv(VecEnv):
         return self.obs_buf.numpy().astype(np.float32)
 
     def step_async(self, actions):
-        self._actions = np.asarray(actions, dtype=np.float32)
+        actions = np.asarray(actions, dtype=np.float32)
+        if self._action_delay > 0:
+            # Push current action, pop oldest
+            delayed = self._action_queue[0].copy()
+            self._action_queue = np.roll(self._action_queue, -1, axis=0)
+            self._action_queue[-1] = actions
+            actions = delayed
+        self._actions = actions
 
     def step_wait(self):
         actions = self._actions

@@ -216,5 +216,189 @@ class TestSwarmObstacles:
         assert np.all(np.isfinite(obs))
 
 
+# ------------------------------------------------------------------ #
+# Asymmetric config tests
+# ------------------------------------------------------------------ #
+
+class TestSwarmAsymmetric:
+    def test_2v1_creates(self):
+        cfg = EnvConfig(num_defenders=2, num_attackers=1, num_obstacles=3)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        assert e.num_envs == 8  # 4 worlds * 2 defenders
+        obs = e.reset()
+        assert obs.shape == (8, OBS_DIM)
+        e.close()
+
+    def test_2v1_steps(self):
+        cfg = EnvConfig(num_defenders=2, num_attackers=1, num_obstacles=3)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((8, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_3v2_creates(self):
+        cfg = EnvConfig(num_defenders=3, num_attackers=2, num_obstacles=3)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        assert e.num_envs == 6  # 2 worlds * 3 defenders
+        obs = e.reset()
+        assert obs.shape == (6, OBS_DIM)
+        e.close()
+
+    def test_3v2_steps(self):
+        cfg = EnvConfig(num_defenders=3, num_attackers=2, num_obstacles=3)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        e.reset()
+        actions = np.zeros((6, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_1v2_creates(self):
+        """Outnumbered defender scenario."""
+        cfg = EnvConfig(num_defenders=1, num_attackers=2, num_obstacles=0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        assert e.num_envs == 4  # 4 worlds * 1 defender
+        obs = e.reset()
+        assert obs.shape == (4, OBS_DIM)
+        actions = np.zeros((4, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_1v3_creates(self):
+        """Heavily outnumbered defender."""
+        cfg = EnvConfig(num_defenders=1, num_attackers=3, num_obstacles=0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        assert e.num_envs == 4
+        obs = e.reset()
+        assert obs.shape == (4, OBS_DIM)
+        e.close()
+
+
+# ------------------------------------------------------------------ #
+# Obstacle collision penalty tests
+# ------------------------------------------------------------------ #
+
+# ------------------------------------------------------------------ #
+# Evade mode tests
+# ------------------------------------------------------------------ #
+
+class TestSwarmEvade:
+    def test_evade_2v2_creates(self):
+        """Evade mode creates with RL controlling attackers."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0, mode="evade")
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        assert e.num_envs == 8  # 4 worlds * 2 attackers
+        e.close()
+
+    def test_evade_obs_shape(self):
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0, mode="evade")
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        obs = e.reset()
+        assert obs.shape == (8, OBS_DIM)
+        e.close()
+
+    def test_evade_step(self):
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0, mode="evade")
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((8, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert obs.shape == (8, OBS_DIM)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_evade_1v2(self):
+        """1 defender vs 2 RL attackers."""
+        cfg = EnvConfig(num_defenders=1, num_attackers=2, num_obstacles=0, mode="evade")
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        assert e.num_envs == 8  # 4 worlds * 2 attackers
+        obs = e.reset()
+        assert obs.shape == (8, OBS_DIM)
+        actions = np.zeros((8, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_evade_with_obstacles(self):
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=3, mode="evade")
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((8, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+
+class TestSwarmObstaclePenalty:
+    def test_collision_penalty_exists(self):
+        """Verify collision penalty config is set."""
+        cfg = EnvConfig()
+        assert cfg.obstacle_collision_penalty == 50.0
+        assert cfg.obstacle_collision_radius == 0.2
+        assert cfg.obstacle_proximity_penalty == 10.0
+
+
+# ------------------------------------------------------------------ #
+# Attacker strategy tests
+# ------------------------------------------------------------------ #
+
+class TestAttackerStrategies:
+    def test_flanking_2v2(self):
+        """Flanking strategy produces finite results."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        attacker_strategy="flanking")
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((8, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_mixed_2v2(self):
+        """Mixed strategy produces finite results."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        attacker_strategy="mixed")
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((8, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_flanking_3v2(self):
+        """Flanking works with asymmetric configs."""
+        cfg = EnvConfig(num_defenders=3, num_attackers=2, num_obstacles=3,
+                        attacker_strategy="flanking")
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        e.reset()
+        actions = np.zeros((6, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_direct_is_default(self):
+        """Default strategy is direct."""
+        cfg = EnvConfig()
+        assert cfg.attacker_strategy == "direct"
+
+    def test_flanking_1v1_falls_back_to_direct(self):
+        """With 1 attacker, flanking degrades to direct (no spread needed)."""
+        cfg = EnvConfig(num_defenders=1, num_attackers=1, num_obstacles=0,
+                        attacker_strategy="flanking")
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

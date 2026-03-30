@@ -23,6 +23,7 @@ class EnvConfig:
     # Attacker
     attacker_speed_scale: float = 1.0  # Scripted attacker speed (1.0 = full speed)
     attacker_speed_limit: float = 1.4  # RL attacker max speed (m/s) — slightly faster than defender (~1.25)
+    attacker_strategy: str = "direct"  # Scripted attacker behavior: "direct", "flanking", "mixed"
 
     # Initialization ranges
     attacker_dist_range: tuple = (1.0, 2.0)   # Start distance from target (close = aggressive)

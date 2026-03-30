@@ -495,6 +495,37 @@ class TestDomainRandomization:
         e_d.close()
         assert drift_d > drift_s, f"Dynamic drift {drift_d} should exceed static {drift_s}"
 
+    def test_action_delay(self):
+        """Action delay should buffer commands without crashing."""
+        cfg = EnvConfig(action_delay_steps=3, num_obstacles=0)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        obs = e.reset()
+        assert np.all(np.isfinite(obs))
+        # First few steps should use zero actions (delay buffer initialized to zero)
+        actions = np.ones((4, 3), dtype=np.float32)
+        for _ in range(10):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_all_domain_rand_combined(self):
+        """All domain randomization features enabled together."""
+        cfg = EnvConfig(
+            mode="intercept",
+            wind_enabled=True, wind_max_force=0.3,
+            obs_noise_std=0.02,
+            obstacle_dynamic=True, obstacle_max_speed=0.3,
+            action_delay_steps=2,
+            num_obstacles=3,
+        )
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        for _ in range(20):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

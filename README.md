@@ -56,6 +56,24 @@ Key findings:
 - **Mixture-of-opponents** training prevents catastrophic forgetting across attacker generations
 - **Variable target altitude** (1.0–3.0m) forces 3D spatial awareness
 
+#### Swarm Results (2v2, 20 episodes each)
+
+| Defender | vs Scripted | vs Flanking | vs Mixed | vs RL Att R2 |
+|---|---|---|---|---|
+| **Adv Def R2** | **100%** | **100%** | **100%** | **95%** |
+| Original 2v2 | 100% | 100% | 100% | 25% |
+| Adv Def R1 | - | - | - | 0% |
+
+Adversarial co-training (2 rounds) improved RL attacker interception from 25% → 95%. Zero target reaches across all matchups. Flanking/mixed scripted strategies don't challenge trained defenders.
+
+#### 3v3 Swarm Results (20 episodes each)
+
+| Defender | vs Scripted | vs Flanking | vs Mixed |
+|---|---|---|---|
+| **3v3 v2** | **95%** | **95%** | **100%** |
+
+3v3 is harder with more attackers to track. Mixed strategy easier to intercept than flanking in 3v3 (flanking forces defenders to split across more angles).
+
 ## Setup
 
 ```bash
@@ -86,12 +104,25 @@ python -m train.train_progressive --phase 2 --resume models/phase1_fly_final.zip
 python -m train.train_progressive --phase 3 --attacker models/phase2_chase_speed0.5_final.zip  # intercept
 ```
 
-### Adversarial Co-Training
+### Adversarial Co-Training (1v1)
 
 ```bash
 # Train attacker and defender against each other in alternating rounds
 python -m train.train_adversarial --defender models/defender_v2_99pct.zip --rounds 4
 python -m train.train_adversarial --defender models/best_model.zip --attacker models/phase2v2_best_attacker.zip --rounds 6
+```
+
+### Swarm Adversarial Co-Training (NvM)
+
+```bash
+# 2v2 adversarial — train RL swarm attackers vs frozen defenders, then retrain defenders
+python -m train.train_swarm_adversarial --defenders 2 --attackers 2 --defender models/swarm_2v2_final.zip --rounds 4
+
+# With mixture-of-opponents (prevents overfitting to single attacker generation)
+python -m train.train_swarm_adversarial --defenders 2 --attackers 2 --defender models/swarm_2v2_final.zip --mixture --rounds 4
+
+# 3v2 asymmetric adversarial with wind + obstacles
+python -m train.train_swarm_adversarial --defenders 3 --attackers 2 --defender models/swarm_3v2_final.zip --wind --obstacles 3 --rounds 3
 ```
 
 ### Swarm Training (NvM)
@@ -100,11 +131,15 @@ python -m train.train_adversarial --defender models/best_model.zip --attacker mo
 # 2v2 with obstacles and wind
 python -m train.train_swarm --defenders 2 --attackers 2 --num-worlds 128 --obstacles 3 --wind
 
+# Asymmetric configs
+python -m train.train_swarm --defenders 2 --attackers 1 --num-worlds 128 --obstacles 3 --wind
+python -m train.train_swarm --defenders 3 --attackers 2 --num-worlds 64 --obstacles 3 --wind
+
 # 3v3 larger scenario
 python -m train.train_swarm --defenders 3 --attackers 3 --num-worlds 64 --timesteps 3000000
 
-# With observation noise
-python -m train.train_swarm --defenders 2 --attackers 2 --noise 0.02
+# Curriculum training (progressive difficulty)
+python -m train.train_swarm_curriculum --defenders 2 --attackers 2 --num-worlds 128
 
 # Resume from checkpoint
 python -m train.train_swarm --defenders 2 --attackers 2 --resume models/swarm_2v2_final.zip
@@ -113,12 +148,17 @@ python -m train.train_swarm --defenders 2 --attackers 2 --resume models/swarm_2v
 ### Evaluation
 
 ```bash
-# Evaluate any mode
-python -m eval.eval_progressive --model models/best_model.zip --mode fly_to_target
-python -m eval.eval_progressive --model models/best_model.zip --mode intercept --attacker models/adv_attacker_round2.zip
-
-# With trajectory plots and animated GIF
+# 1v1 evaluation with plots and GIF
 python -m eval.eval_progressive --model models/defender_best_v5.zip --mode intercept --attacker models/adv_attacker_round1.zip --gif --episodes 50
+
+# Swarm evaluation with trajectory grid
+python -m eval.eval_swarm --model models/swarm_2v2_final.zip --defenders 2 --attackers 2 --episodes 20 --gif
+python -m eval.eval_swarm --model models/swarm_2v1_final.zip --defenders 2 --attackers 1 --episodes 20
+python -m eval.eval_swarm --model models/swarm_3v2_final.zip --defenders 3 --attackers 2 --episodes 20
+
+# Swarm cross-evaluation matrix (auto-discovers models)
+python -m eval.eval_swarm_matrix --defenders 2 --attackers 2 --episodes 20
+python -m eval.eval_swarm_matrix --defenders 2 --attackers 2 --defender-models models/swarm_2v2_final.zip models/swarm_adv_defender_2v2_round1.zip
 ```
 
 ### Interactive Game
@@ -138,6 +178,12 @@ python -m eval.game --mode attack --defender models/defender_best_v5.zip
 
 # Swarm mode — watch NvM defenders vs attackers
 python -m eval.game --mode swarm --defenders 2 --attackers 2 --defender models/swarm_2v2_final.zip
+
+# Swarm vs RL attackers
+python -m eval.game --mode swarm --defenders 2 --attackers 2 --defender models/swarm_adv_defender_2v2_round2.zip --attacker-model models/swarm_adv_attacker_2v2_round2.zip
+
+# Swarm with flanking strategy
+python -m eval.game --mode swarm --defenders 2 --attackers 2 --defender models/swarm_2v2_final.zip --strategy flanking
 
 # Larger arena
 python -m eval.game --mode watch --arena 12 --defender models/defender_best_v5.zip --attacker models/adv_attacker_round2.zip
@@ -164,14 +210,18 @@ droneVdrone/
 │   ├── config.py                 # Hyperparameters and env settings
 │   ├── train_progressive.py      # Progressive training pipeline (1v1)
 │   ├── train_adversarial.py      # Adversarial co-training (1v1)
-│   └── train_swarm.py            # Swarm training (NvM)
+│   ├── train_swarm.py            # Swarm training (NvM)
+│   ├── train_swarm_curriculum.py # Swarm curriculum (progressive difficulty)
+│   └── train_swarm_adversarial.py # Swarm adversarial co-training (NvM arms race)
 ├── eval/
-│   ├── eval_progressive.py       # Evaluation with plots and GIFs
-│   ├── eval_matrix.py            # Cross-evaluation of defender×attacker pairs
+│   ├── eval_progressive.py       # 1v1 evaluation with plots and GIFs
+│   ├── eval_swarm.py             # Swarm evaluation with trajectory grids
+│   ├── eval_matrix.py            # Cross-evaluation of defender×attacker pairs (1v1)
+│   ├── eval_swarm_matrix.py      # Swarm defender×attacker cross-evaluation (NvM)
 │   └── game.py                   # Interactive game (free/defend/attack/watch/swarm)
 ├── tests/
-│   ├── test_newton_env.py        # 1v1 env tests (41 tests)
-│   └── test_swarm_env.py         # Swarm env tests (21 tests)
+│   ├── test_newton_env.py        # 1v1 env tests (46 tests)
+│   └── test_swarm_env.py         # Swarm env tests (38 tests)
 ├── models/                       # Saved trained models (gitignored)
 └── logs/                         # TensorBoard logs (gitignored)
 ```
@@ -190,6 +240,7 @@ All hyperparameters in `train/config.py`:
 - `obs_noise_std` — Gaussian observation noise
 - `num_obstacles` — static obstacle pillars (default 3)
 - `target_alt_randomize` — variable target elevation (1.0–3.0m)
+- `attacker_strategy` — scripted attacker behavior: `"direct"`, `"flanking"`, `"mixed"`
 
 **TrainConfig** — SAC hyperparameters:
 - `ent_coef = 0.1` — fixed entropy (auto collapsed to 0.003)
@@ -225,8 +276,16 @@ python -m train.train_swarm --defenders 2 --attackers 2 --wind --wind-force 0.3 
 - [x] Static obstacles with proximity penalties
 - [x] Variable target altitude (1.0–3.0m)
 - [x] 250g drone mass (realistic Crazyflie weight)
-- [ ] Dynamic/moving obstacles
-- [ ] Swarm adversarial co-training (train NvM attacker)
+- [x] Dynamic/moving obstacles (configurable speed + bounce)
+- [x] Significant obstacle collision penalties (-50 contact, -10x proximity)
+- [x] Action delay simulation (configurable latency for sim-to-real)
+- [x] Asymmetric swarm configs (2v1, 3v2, 1v3)
+- [x] Swarm curriculum training (progressive difficulty stages)
+- [x] Swarm evaluation tool with trajectory grids + GIFs
+- [x] Swarm adversarial co-training (train NvM RL attacker swarms)
+- [x] Coordinated attacker strategies (flanking, mixed)
+- [x] Priority targeting reward shaping (focus on most-threatening attacker)
+- [x] Swarm evaluation matrix (cross-evaluate defender×attacker pairs)
 - [ ] Sim-to-real transfer with Crazyflie hardware
 
 ## Tech Stack
