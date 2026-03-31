@@ -23,6 +23,7 @@ class EnvConfig:
     # Attacker
     attacker_speed_scale: float = 1.0  # Scripted attacker speed (1.0 = full speed)
     attacker_speed_limit: float = 1.4  # RL attacker max speed (m/s) — slightly faster than defender (~1.25)
+    attacker_strategy: str = "direct"  # Scripted attacker behavior: "direct", "flanking", "mixed"
 
     # Initialization ranges
     attacker_dist_range: tuple = (1.0, 2.0)   # Start distance from target (close = aggressive)
@@ -56,8 +57,27 @@ class EnvConfig:
     obstacle_height: float = 2.0                 # Obstacle cylinder half-height (meters)
     obstacle_placement_range: float = 2.0        # Max distance from origin for obstacle placement
     obstacle_min_spacing: float = 0.8            # Min distance between obstacles
-    obstacle_proximity_penalty: float = 2.0      # Reward penalty scale near obstacles
+    obstacle_proximity_penalty: float = 10.0     # Reward penalty scale near obstacles
     obstacle_danger_radius: float = 0.5          # Proximity penalty kicks in at this distance
+    obstacle_collision_penalty: float = 50.0     # Hard penalty for hitting obstacle (within radius)
+    obstacle_collision_radius: float = 0.2       # Collision detection radius (slightly > physical 0.15)
+    obstacle_dynamic: bool = False               # Enable moving obstacles
+    obstacle_max_speed: float = 0.3              # Max obstacle drift speed (m/s)
+    obstacle_direction_change_freq: int = 96     # Obstacle changes direction every N steps
+
+    # Multi-drone swarm
+    num_defenders: int = 1        # N defenders per world
+    num_attackers: int = 1        # M attackers per world
+    max_defenders: int = 3        # Max for obs padding (fixed obs dim)
+    max_attackers: int = 3        # Max for obs padding (fixed obs dim)
+    coordination_bonus: float = 0.5  # Reward for defender spread
+
+    # Domain randomization
+    wind_enabled: bool = False        # Enable random wind forces
+    wind_max_force: float = 0.3       # Max wind force (Newtons)
+    wind_change_freq: int = 48        # Wind direction changes every N steps
+    obs_noise_std: float = 0.0        # Gaussian noise on observations (0 = disabled)
+    action_delay_steps: int = 0       # Action delay in steps (0 = disabled)
 
     # Phase-specific settings
     target_randomize_range: float = 2.0   # Random target radius (fly_to_target)

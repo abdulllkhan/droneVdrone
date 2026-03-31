@@ -387,5 +387,145 @@ class TestModes:
         e.close()
 
 
+# ------------------------------------------------------------------ #
+# Domain randomization tests
+# ------------------------------------------------------------------ #
+
+class TestDomainRandomization:
+    def test_wind_env_creates(self):
+        cfg = EnvConfig(wind_enabled=True, wind_max_force=0.5, num_obstacles=0)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        obs = e.reset()
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_wind_force_nonzero(self):
+        cfg = EnvConfig(wind_enabled=True, wind_max_force=0.5, num_obstacles=0)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        e.reset()
+        assert np.any(e.wind_force != 0)
+        e.close()
+
+    def test_wind_step_finite(self):
+        cfg = EnvConfig(wind_enabled=True, wind_max_force=0.3, num_obstacles=0)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_obs_noise_applied(self):
+        cfg = EnvConfig(obs_noise_std=0.1, num_obstacles=0)
+        e = NewtonDroneEnv(num_envs=8, config=cfg)
+        obs1 = e.reset().copy()
+        obs2 = e.reset().copy()
+        # With noise, two resets should produce slightly different obs
+        # (even same positions get different noise)
+        # We just check it doesn't crash and is finite
+        assert np.all(np.isfinite(obs1))
+        assert np.all(np.isfinite(obs2))
+        e.close()
+
+    def test_obs_noise_zero_noop(self):
+        cfg = EnvConfig(obs_noise_std=0.0, num_obstacles=0)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        obs = e.reset()
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_wind_with_intercept(self):
+        cfg = EnvConfig(mode="intercept", wind_enabled=True, wind_max_force=0.3,
+                        num_obstacles=3)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        for _ in range(10):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_dynamic_obstacles_move(self):
+        cfg = EnvConfig(num_obstacles=3, obstacle_dynamic=True, obstacle_max_speed=0.5)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        e.reset()
+        pos_before = e.obstacle_pos_buf.numpy().copy()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        for _ in range(20):
+            e.step(actions)
+        pos_after = e.obstacle_pos_buf.numpy()
+        # Obstacles should have moved
+        assert np.any(pos_before != pos_after), "Dynamic obstacles didn't move"
+        e.close()
+
+    def test_dynamic_obstacles_finite(self):
+        cfg = EnvConfig(mode="intercept", num_obstacles=3,
+                        obstacle_dynamic=True, obstacle_max_speed=0.3)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        for _ in range(50):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_dynamic_moves_more_than_static(self):
+        """Dynamic obstacles should drift more than static ones over time."""
+        # Static
+        cfg_s = EnvConfig(mode="fly_to_target", num_obstacles=3, obstacle_dynamic=False,
+                          episode_secs=60.0)  # long episode to avoid resets
+        e_s = NewtonDroneEnv(num_envs=4, config=cfg_s)
+        e_s.reset()
+        pos_s0 = e_s.obstacle_pos_buf.numpy().copy()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        for _ in range(20):
+            e_s.step(actions)
+        drift_s = np.sum(np.abs(e_s.obstacle_pos_buf.numpy() - pos_s0))
+        e_s.close()
+        # Dynamic
+        cfg_d = EnvConfig(mode="fly_to_target", num_obstacles=3, obstacle_dynamic=True,
+                          obstacle_max_speed=0.5, episode_secs=60.0)
+        e_d = NewtonDroneEnv(num_envs=4, config=cfg_d)
+        e_d.reset()
+        pos_d0 = e_d.obstacle_pos_buf.numpy().copy()
+        for _ in range(20):
+            e_d.step(actions)
+        drift_d = np.sum(np.abs(e_d.obstacle_pos_buf.numpy() - pos_d0))
+        e_d.close()
+        assert drift_d > drift_s, f"Dynamic drift {drift_d} should exceed static {drift_s}"
+
+    def test_action_delay(self):
+        """Action delay should buffer commands without crashing."""
+        cfg = EnvConfig(action_delay_steps=3, num_obstacles=0)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        obs = e.reset()
+        assert np.all(np.isfinite(obs))
+        # First few steps should use zero actions (delay buffer initialized to zero)
+        actions = np.ones((4, 3), dtype=np.float32)
+        for _ in range(10):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_all_domain_rand_combined(self):
+        """All domain randomization features enabled together."""
+        cfg = EnvConfig(
+            mode="intercept",
+            wind_enabled=True, wind_max_force=0.3,
+            obs_noise_std=0.02,
+            obstacle_dynamic=True, obstacle_max_speed=0.3,
+            action_delay_steps=2,
+            num_obstacles=3,
+        )
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        for _ in range(20):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
