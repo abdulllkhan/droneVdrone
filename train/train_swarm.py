@@ -50,8 +50,13 @@ def train_swarm(args):
         num_obstacles=args.obstacles,
         wind_enabled=args.wind,
         wind_max_force=args.wind_force,
+        wind_gust_prob=args.gust_prob,
+        wind_gust_force=args.gust_force,
         obs_noise_std=args.noise,
         attacker_strategy=args.strategy,
+        sensor_range=args.sensor_range,
+        attacker_speed_variance=args.speed_var,
+        drone_mass_variance=args.mass_var,
     )
 
     print(f"\n{'='*60}")
@@ -89,13 +94,12 @@ def train_swarm(args):
         tensorboard_log=train_cfg.tensorboard_log,
         verbose=1,
         seed=train_cfg.seed,
+        device="cuda",
     )
 
     if args.resume:
         print(f"Loading weights from {args.resume}")
-        model = SAC.load(args.resume, env=env)
-        # Note: weight transfer from 1v1 (35-dim) to swarm (57-dim) requires
-        # architecture match. If dimensions differ, train from scratch.
+        model = SAC.load(args.resume, env=env, device="cuda")
     else:
         model = SAC(**model_kwargs)
 
@@ -152,6 +156,11 @@ if __name__ == "__main__":
                         choices=["direct", "flanking", "mixed"],
                         help="Scripted attacker strategy")
     parser.add_argument("--resume", type=str, default="", help="Resume from model path")
+    parser.add_argument("--sensor-range", type=float, default=0.0, help="Sensor detection range (0=unlimited)")
+    parser.add_argument("--gust-prob", type=float, default=0.0, help="Wind gust probability per step")
+    parser.add_argument("--gust-force", type=float, default=1.0, help="Max gust force (N)")
+    parser.add_argument("--speed-var", type=float, default=0.0, help="Attacker speed variance ±fraction")
+    parser.add_argument("--mass-var", type=float, default=0.0, help="Drone mass variance ±fraction")
     args = parser.parse_args()
 
     train_swarm(args)

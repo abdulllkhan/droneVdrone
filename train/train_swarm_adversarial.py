@@ -43,12 +43,27 @@ def linear_schedule(initial_value):
     return func
 
 
+def _realworld_kwargs(args):
+    """Common real-world domain randomization kwargs."""
+    return dict(
+        wind_enabled=args.wind,
+        wind_max_force=args.wind_force,
+        wind_gust_prob=args.gust_prob,
+        wind_gust_force=args.gust_force,
+        obs_noise_std=args.noise,
+        sensor_range=args.sensor_range,
+        attacker_speed_variance=args.speed_var,
+        drone_mass_variance=args.mass_var,
+    )
+
+
 def train_swarm_role(role, args, train_cfg, frozen_model_path, resume_path=None, tag_suffix=""):
     """Train one side of the swarm adversarial pair.
 
     role: 'attacker' or 'defender'
     frozen_model_path: path to opponent model
     """
+    rw = _realworld_kwargs(args)
     if role == "attacker":
         mode = "evade"
         env_kwargs = dict(
@@ -57,9 +72,7 @@ def train_swarm_role(role, args, train_cfg, frozen_model_path, resume_path=None,
             num_attackers=args.attackers,
             num_obstacles=args.obstacles,
             defender_model_path=frozen_model_path,
-            wind_enabled=args.wind,
-            wind_max_force=args.wind_force,
-            obs_noise_std=args.noise,
+            **rw,
         )
     else:
         mode = "intercept"
@@ -69,9 +82,7 @@ def train_swarm_role(role, args, train_cfg, frozen_model_path, resume_path=None,
             num_attackers=args.attackers,
             num_obstacles=args.obstacles,
             attacker_model_path=frozen_model_path,
-            wind_enabled=args.wind,
-            wind_max_force=args.wind_force,
-            obs_noise_std=args.noise,
+            **rw,
         )
 
     tag = f"swarm_adv_{role}_{args.defenders}v{args.attackers}{tag_suffix}"
@@ -111,7 +122,7 @@ def train_swarm_role(role, args, train_cfg, frozen_model_path, resume_path=None,
             ent_coef = "auto"
 
     if resume_path:
-        model = SAC.load(resume_path, env=env)
+        model = SAC.load(resume_path, env=env, device="cuda")
         model.learning_rate = train_cfg.learning_rate
     else:
         model = SAC(
@@ -128,6 +139,7 @@ def train_swarm_role(role, args, train_cfg, frozen_model_path, resume_path=None,
             tensorboard_log=train_cfg.tensorboard_log,
             seed=train_cfg.seed,
             verbose=1,
+            device="cuda",
         )
 
     checkpoint_cb = CheckpointCallback(
@@ -180,15 +192,14 @@ def train_swarm_mixture_defender(args, train_cfg, attacker_pool, resume_path=Non
         print(f"  Resume: {resume_path}")
     print(f"{'='*60}\n")
 
+    rw = _realworld_kwargs(args)
     cfg = EnvConfig(
         mode="intercept",
         num_defenders=args.defenders,
         num_attackers=args.attackers,
         num_obstacles=args.obstacles,
         attacker_model_paths=tuple(attacker_pool),
-        wind_enabled=args.wind,
-        wind_max_force=args.wind_force,
-        obs_noise_std=args.noise,
+        **rw,
     )
     env = NewtonSwarmEnv(num_worlds=args.num_worlds, config=cfg)
 
@@ -209,7 +220,7 @@ def train_swarm_mixture_defender(args, train_cfg, attacker_pool, resume_path=Non
             ent_coef = "auto"
 
     if resume_path:
-        model = SAC.load(resume_path, env=env)
+        model = SAC.load(resume_path, env=env, device="cuda")
         model.learning_rate = train_cfg.learning_rate
     else:
         model = SAC(
@@ -226,6 +237,7 @@ def train_swarm_mixture_defender(args, train_cfg, attacker_pool, resume_path=Non
             tensorboard_log=train_cfg.tensorboard_log,
             seed=train_cfg.seed,
             verbose=1,
+            device="cuda",
         )
 
     checkpoint_cb = CheckpointCallback(
@@ -282,6 +294,11 @@ def main():
     parser.add_argument("--noise", type=float, default=0.0)
     parser.add_argument("--mixture", action="store_true",
                         help="Use mixture-of-opponents training")
+    parser.add_argument("--sensor-range", type=float, default=0.0, help="Sensor range (0=unlimited)")
+    parser.add_argument("--gust-prob", type=float, default=0.0, help="Wind gust probability per step")
+    parser.add_argument("--gust-force", type=float, default=1.0, help="Max gust force (N)")
+    parser.add_argument("--speed-var", type=float, default=0.0, help="Attacker speed variance ±fraction")
+    parser.add_argument("--mass-var", type=float, default=0.0, help="Drone mass variance ±fraction")
     args = parser.parse_args()
 
     wp.init()

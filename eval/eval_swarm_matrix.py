@@ -31,7 +31,7 @@ from train.config import EnvConfig
 
 def eval_swarm_matchup(defender_path, attacker_path, n_def, n_att,
                        num_episodes=20, num_worlds=4, num_obstacles=3,
-                       max_steps=480):
+                       max_steps=480, realworld=False, attacker_strategy="direct"):
     """Run episodes for one defender vs one attacker configuration.
 
     Returns dict with outcome counts and avg steps.
@@ -40,12 +40,25 @@ def eval_swarm_matchup(defender_path, attacker_path, n_def, n_att,
         num_defenders=n_def,
         num_attackers=n_att,
         num_obstacles=num_obstacles,
+        attacker_strategy=attacker_strategy,
     )
-    if attacker_path:
+    if realworld:
+        env_kwargs.update(
+            wind_enabled=True,
+            wind_max_force=0.5,
+            wind_gust_prob=0.03,
+            wind_gust_force=1.0,
+            obs_noise_std=0.03,
+            sensor_range=5.0,
+            attacker_speed_variance=0.15,
+            drone_mass_variance=0.1,
+        )
+    if isinstance(attacker_path, str) and attacker_path:
         env_kwargs["attacker_model_path"] = attacker_path
 
     cfg = EnvConfig(**env_kwargs)
-    env = NewtonSwarmEnv(num_worlds=num_worlds, config=cfg)
+    # Use num_worlds=1 for clean per-episode evaluation (avoids cross-world confusion)
+    env = NewtonSwarmEnv(num_worlds=1, config=cfg)
     model = SAC.load(defender_path)
 
     outcomes = {"all_intercepted": 0, "target_reached": 0, "timeout": 0}
@@ -64,6 +77,7 @@ def eval_swarm_matchup(defender_path, attacker_path, n_def, n_att,
             ep_reward += float(np.mean(rewards))
 
             if np.any(dones):
+                # With num_worlds=1, infos[0] is always the right world
                 info = infos[0]
                 if info.get("all_eliminated"):
                     outcome = "all_intercepted"
@@ -106,6 +120,10 @@ def main():
     parser.add_argument("--attacker-models", nargs="+", default=None,
                         help="Specific attacker model paths (RL)")
     parser.add_argument("--model-dir", type=str, default="models")
+    parser.add_argument("--realworld", action="store_true",
+                        help="Evaluate under real-world conditions (wind, gusts, sensor limits, variance)")
+    parser.add_argument("--strategies", nargs="+", default=["direct", "flanking", "mixed"],
+                        help="Scripted attacker strategies to test")
     args = parser.parse_args()
 
     wp.init()
@@ -135,23 +153,26 @@ def main():
         print(f"No defender models found for {tag}. Use --defender-models.")
         return
 
-    # Discover attacker models
-    att_entries = {"Scripted": None}
+    # Discover attacker models — scripted strategies
+    att_entries = {}
+    for strat in args.strategies:
+        att_entries[f"Scripted({strat})"] = ("scripted", strat)
     if args.attacker_models:
         for p in args.attacker_models:
             name = os.path.basename(p).replace(".zip", "")
-            att_entries[name] = p
+            att_entries[name] = ("rl", p)
     else:
         att_paths = discover_models(f"swarm_adv_attacker_{tag}*.zip", args.model_dir)
         for p in att_paths:
             name = os.path.basename(p).replace(".zip", "")
-            att_entries[name] = p
+            att_entries[name] = ("rl", p)
 
     # Print header
     att_names = list(att_entries.keys())
     print(f"\n{'='*100}")
     print(f"  SWARM EVALUATION MATRIX — {tag} ({args.episodes} episodes per matchup)")
-    print(f"  Obstacles: {args.obstacles} | Worlds: {args.num_worlds}")
+    rw = "ON" if args.realworld else "OFF"
+    print(f"  Obstacles: {args.obstacles} | Worlds: {args.num_worlds} | Real-world: {rw}")
     print(f"{'='*100}\n")
 
     # Column widths
@@ -168,10 +189,14 @@ def main():
         def_name = os.path.basename(def_path).replace(".zip", "")
         row = f"{def_name:<{def_col_w}}"
 
-        for att_name, att_path in att_entries.items():
-            if att_path and not os.path.exists(att_path):
+        for att_name, att_info in att_entries.items():
+            att_type, att_value = att_info
+            if att_type == "rl" and not os.path.exists(att_value):
                 row += f"{'| N/A':<{col_w}}"
                 continue
+
+            att_path = att_value if att_type == "rl" else None
+            att_strategy = att_value if att_type == "scripted" else "direct"
 
             result = eval_swarm_matchup(
                 defender_path=def_path,
@@ -181,6 +206,8 @@ def main():
                 num_episodes=args.episodes,
                 num_worlds=args.num_worlds,
                 num_obstacles=args.obstacles,
+                realworld=args.realworld,
+                attacker_strategy=att_strategy,
             )
 
             i = result["intercepted"]
@@ -206,7 +233,7 @@ def main():
     for def_path in def_paths:
         def_name = os.path.basename(def_path).replace(".zip", "")
         min_pct = 100
-        for att_name in att_entries:
+        for att_name in att_entries.keys():
             key = (def_name, att_name)
             if key in all_results:
                 pct = all_results[key]["intercepted"] / args.episodes * 100
@@ -224,7 +251,7 @@ def main():
     for def_path in def_paths:
         def_name = os.path.basename(def_path).replace(".zip", "")
         pcts = []
-        for att_name in att_entries:
+        for att_name in att_entries.keys():
             key = (def_name, att_name)
             if key in all_results:
                 pcts.append(all_results[key]["intercepted"] / args.episodes * 100)

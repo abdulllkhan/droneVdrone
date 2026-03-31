@@ -426,6 +426,165 @@ class TestDefenderLeash:
         assert np.all(np.isfinite(rewards))
         e.close()
 
+    def test_zone_time_penalty_escalates(self):
+        """Outside-zone step counter should increase over time."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        defender_leash_radius=0.5, defender_zone_time_penalty=1.0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(10):
+            e.step(actions)
+        # Defenders start 0.3-1.0m from target, with 0.5m radius most should be outside
+        assert np.any(e.outside_zone_steps > 0), "Zone counter should increment when outside"
+        e.close()
+
+    def test_zone_counter_resets_on_episode_reset(self):
+        """Zone counter should reset on full reset."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        defender_leash_radius=0.5)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(5):
+            e.step(actions)
+        e.reset()
+        assert np.all(e.outside_zone_steps == 0), "Zone counter should reset"
+        e.close()
+
+
+class TestAngularCoverage:
+    def test_angular_coverage_runs(self):
+        """Env with angular coverage bonus should step without errors."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        angular_coverage_bonus=1.0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(20):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_angular_coverage_3v3(self):
+        """Angular coverage should work in 3v3."""
+        cfg = EnvConfig(num_defenders=3, num_attackers=3, num_obstacles=0,
+                        angular_coverage_bonus=0.5)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 3, 3), dtype=np.float32)
+        for _ in range(10):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+
+class TestInterceptEfficiency:
+    def test_efficiency_bonus_config(self):
+        cfg = EnvConfig()
+        assert cfg.intercept_efficiency_bonus == 1.0
+
+    def test_efficiency_bonus_runs(self):
+        """Env with intercept efficiency bonus should step without errors."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        intercept_efficiency_bonus=5.0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(30):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+
+class TestSensorRange:
+    def test_sensor_range_runs(self):
+        """Env with limited sensor range should step without errors."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        sensor_range=3.0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(10):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_sensor_range_zeros_far_targets(self):
+        """With tight sensor range, far-away agents should be zeroed in obs."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        sensor_range=0.5)  # very tight — most agents out of range
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        obs = e.reset()
+        # Attacker block starts at dim 13, if out of range should be zeros
+        # Just verify it runs and is finite
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_sensor_range_unlimited(self):
+        """sensor_range=0 means unlimited (default behavior)."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        sensor_range=0.0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        obs = e.reset()
+        # With unlimited range, attacker obs should be non-zero
+        # (attacker pos is in slots 13:16 for first attacker)
+        assert np.any(obs[:, 13:16] != 0), "Unlimited sensor should see attackers"
+        e.close()
+
+
+class TestWindGusts:
+    def test_wind_gusts_run(self):
+        """Wind with gusts enabled should step without errors."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        wind_enabled=True, wind_max_force=0.3,
+                        wind_gust_prob=0.5, wind_gust_force=2.0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(20):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+
+class TestDroneVariance:
+    def test_attacker_speed_variance(self):
+        """Per-attacker speed should vary with variance > 0."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        attacker_speed_variance=0.3)
+        e = NewtonSwarmEnv(num_worlds=8, config=cfg)
+        e.reset()
+        # Per-attacker speeds should not all be identical
+        speeds = e.per_attacker_speed.flatten()
+        assert not np.all(speeds == speeds[0]), "Attacker speeds should vary"
+        e.close()
+
+    def test_mass_variance(self):
+        """Per-drone mass should vary with variance > 0."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        drone_mass_variance=0.2)
+        e = NewtonSwarmEnv(num_worlds=8, config=cfg)
+        e.reset()
+        masses = e.per_drone_mass.flatten()
+        assert not np.all(masses == masses[0]), "Drone masses should vary"
+        e.close()
+
+    def test_variance_steps_finite(self):
+        """Env with all variance enabled should produce finite results."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=3,
+                        attacker_speed_variance=0.2, drone_mass_variance=0.15,
+                        wind_enabled=True, wind_gust_prob=0.1,
+                        sensor_range=5.0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(30):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

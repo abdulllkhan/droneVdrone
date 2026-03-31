@@ -244,6 +244,10 @@ class NewtonSwarmEnv(VecEnv):
         self.defender_speed_limit = 0.15 * 30.0 * (1000.0 / 3600.0)  # ~1.25 m/s
         self.attacker_speed_limit = self.cfg.attacker_speed_limit
         self.attacker_speed = self.cfg.attacker_speed_scale * 0.8
+        # Per-attacker speed array (randomized each episode if variance > 0)
+        self.per_attacker_speed = np.full((num_worlds, self.M), self.attacker_speed, dtype=np.float32)
+        # Per-drone mass array (randomized each episode if variance > 0)
+        self.per_drone_mass = np.full((num_worlds, self.N + self.M), self.cfg.drone_mass, dtype=np.float32)
 
         # Force model
         self.force_kp = self.cfg.force_kp
@@ -306,6 +310,7 @@ class NewtonSwarmEnv(VecEnv):
         self.step_count_buf = wp.zeros(num_worlds, dtype=int, device=self.device)
         self.prev_dist_buf = np.zeros((num_worlds, self.rl_agents_per_world), dtype=np.float32)
         self.eliminated_attackers = np.zeros((num_worlds, self.M), dtype=bool)
+        self.outside_zone_steps = np.zeros((num_worlds, self.N), dtype=np.float32)  # time-based zone penalty counter
 
         # Init positions buffer
         self.init_pos_buf = wp.zeros((num_worlds, self.bodies_per_world),
@@ -347,6 +352,8 @@ class NewtonSwarmEnv(VecEnv):
         self.step_count_buf.zero_()
         self.prev_vel[:] = 0.0
         self.eliminated_attackers[:] = False
+        self.outside_zone_steps[:] = 0.0
+        self._randomize_drone_variance()
         self._randomize_wind()
         self._compute_obs()
         return self.obs_buf.copy()
@@ -443,6 +450,14 @@ class NewtonSwarmEnv(VecEnv):
                     self.prev_dist_buf[w] = 0.0
                     self.prev_vel[w] = 0.0
                     self.eliminated_attackers[w] = False
+                    self.outside_zone_steps[w] = 0.0
+                    # Re-randomize drone variance for this world
+                    if self.cfg.attacker_speed_variance > 0:
+                        for a in range(self.M):
+                            self.per_attacker_speed[w, a] = self.attacker_speed * (1.0 + np.random.uniform(-self.cfg.attacker_speed_variance, self.cfg.attacker_speed_variance))
+                    if self.cfg.drone_mass_variance > 0:
+                        for i in range(self.N + self.M):
+                            self.per_drone_mass[w, i] = self.cfg.drone_mass * (1.0 + np.random.uniform(-self.cfg.drone_mass_variance, self.cfg.drone_mass_variance))
             self.step_count_buf = wp.array(step_np, dtype=int, device=self.device)
 
         # Update wind periodically
@@ -507,7 +522,12 @@ class NewtonSwarmEnv(VecEnv):
             for w in range(self.num_worlds):
                 idx = w * self._num_drones + self.N + a
                 if not self.eliminated_attackers[w, a]:
-                    vel_np[idx] = scripted[w]
+                    # Apply per-attacker speed variance (kernel uses base speed, scale here)
+                    if self.cfg.attacker_speed_variance > 0 and self.attacker_speed > 0:
+                        scale = self.per_attacker_speed[w, a] / self.attacker_speed
+                        vel_np[idx] = scripted[w] * scale
+                    else:
+                        vel_np[idx] = scripted[w]
 
     def _compute_flanking_attacker_velocities(self, vel_np):
         """Attackers approach target from spread-out angles to overwhelm defenders.
@@ -549,7 +569,7 @@ class NewtonSwarmEnv(VecEnv):
                         direction = direction / d
 
                 idx = w * self._num_drones + self.N + a
-                vel_np[idx] = direction * self.attacker_speed
+                vel_np[idx] = direction * self.per_attacker_speed[w, a]
 
     def _compute_mixed_attacker_velocities(self, vel_np):
         """Mixed strategy: first attacker flanks, rest go direct. Randomized per reset.
@@ -585,7 +605,7 @@ class NewtonSwarmEnv(VecEnv):
                     direction = direction / d
 
                 idx = w * self._num_drones + self.N + a
-                vel_np[idx] = direction * self.attacker_speed
+                vel_np[idx] = direction * self.per_attacker_speed[w, a]
 
     def _compute_defender_velocities(self, vel_np):
         """Set defender velocities from frozen model (evade mode)."""
@@ -803,6 +823,7 @@ class NewtonSwarmEnv(VecEnv):
 
             any_intercept = False
             any_target_reached = False
+            efficient_intercept_defenders = set()  # defenders that intercepted as closest
 
             # Check intercept pairs
             for d in range(self.N):
@@ -813,6 +834,16 @@ class NewtonSwarmEnv(VecEnv):
                     if dist < self.cfg.intercept_dist:
                         self.eliminated_attackers[w, a] = True
                         any_intercept = True
+                        # Check if this defender was the closest to this attacker
+                        was_closest = True
+                        for d2 in range(self.N):
+                            if d2 != d:
+                                d2_dist = np.linalg.norm(def_positions[d2] - att_positions[a])
+                                if d2_dist < dist:
+                                    was_closest = False
+                                    break
+                        if was_closest:
+                            efficient_intercept_defenders.add(d)
 
             # Check target reached
             for a in range(self.M):
@@ -909,6 +940,9 @@ class NewtonSwarmEnv(VecEnv):
 
                     if any_intercept:
                         reward += 100.0
+                        # Efficiency bonus: extra reward if this defender intercepted as closest
+                        if d in efficient_intercept_defenders:
+                            reward += self.cfg.intercept_efficiency_bonus
                     if any_target_reached:
                         reward -= 200.0
                     if all_eliminated:
@@ -962,6 +996,31 @@ class NewtonSwarmEnv(VecEnv):
                     def_to_target = np.linalg.norm(def_positions[d] - target)
                     if def_to_target > self.cfg.defender_leash_radius:
                         reward -= (def_to_target - self.cfg.defender_leash_radius) * self.cfg.defender_leash_penalty
+                        # Time-based zone penalty: escalates the longer defender stays outside
+                        self.outside_zone_steps[w, d] += 1.0
+                        reward -= self.outside_zone_steps[w, d] * self.cfg.defender_zone_time_penalty
+                    else:
+                        self.outside_zone_steps[w, d] = max(0.0, self.outside_zone_steps[w, d] - 0.5)  # decay when back inside
+
+                    # Angular coverage: reward defenders for spreading angles around target
+                    if self.N > 1 and n_active > 0:
+                        # Compute angle of this defender relative to target
+                        dx = def_positions[d][0] - target[0]
+                        dy = def_positions[d][1] - target[1]
+                        my_angle = np.arctan2(dy, dx)
+                        # Compare with other defenders' angles
+                        for d2 in range(self.N):
+                            if d2 != d:
+                                dx2 = def_positions[d2][0] - target[0]
+                                dy2 = def_positions[d2][1] - target[1]
+                                other_angle = np.arctan2(dy2, dx2)
+                                angle_diff = abs(my_angle - other_angle)
+                                if angle_diff > np.pi:
+                                    angle_diff = 2 * np.pi - angle_diff
+                                # Reward angular separation (ideal: pi for 2 defenders, 2pi/3 for 3)
+                                ideal_sep = np.pi / max(1, self.N - 1)
+                                if angle_diff > ideal_sep * 0.5:
+                                    reward += self.cfg.angular_coverage_bonus * min(angle_diff / np.pi, 1.0)
 
                     reward -= 0.05
 
@@ -1124,13 +1183,16 @@ class NewtonSwarmEnv(VecEnv):
                         att_dists.append((dist, a))
                     att_dists.sort()
 
+                    sensor_range = self.cfg.sensor_range
                     for k in range(min(self.M, MAX_ATTACKERS)):
                         dist, a = att_dists[k]
                         base = 13 + k * 7
                         if not self.eliminated_attackers[w, a]:
-                            obs[base:base+3] = positions[self.N + a] * pos_scale
-                            obs[base+3:base+6] = velocities[self.N + a] * vel_scale
-                            obs[base+6] = dist * rel_scale
+                            if sensor_range <= 0 or dist <= sensor_range:
+                                obs[base:base+3] = positions[self.N + a] * pos_scale
+                                obs[base+3:base+6] = velocities[self.N + a] * vel_scale
+                                obs[base+6] = dist * rel_scale
+                            # else: stays zeroed — out of sensor range
 
                     tm_dists = []
                     for d2 in range(self.N):
@@ -1143,9 +1205,10 @@ class NewtonSwarmEnv(VecEnv):
                     for k in range(min(self.N - 1, MAX_DEFENDERS - 1)):
                         dist, d2 = tm_dists[k]
                         base = 34 + k * 7
-                        obs[base:base+3] = positions[d2] * pos_scale
-                        obs[base+3:base+6] = velocities[d2] * vel_scale
-                        obs[base+6] = dist * rel_scale
+                        if sensor_range <= 0 or dist <= sensor_range:
+                            obs[base:base+3] = positions[d2] * pos_scale
+                            obs[base+3:base+6] = velocities[d2] * vel_scale
+                            obs[base+6] = dist * rel_scale
 
                     if obs_pos_np is not None:
                         for o in range(self._num_obstacles):
@@ -1277,6 +1340,17 @@ class NewtonSwarmEnv(VecEnv):
         )
         wp.synchronize()
 
+    def _randomize_drone_variance(self):
+        """Randomize per-drone mass and per-attacker speed each episode."""
+        if self.cfg.attacker_speed_variance > 0:
+            v = self.cfg.attacker_speed_variance
+            self.per_attacker_speed[:] = self.attacker_speed * (
+                1.0 + np.random.uniform(-v, v, size=(self.num_worlds, self.M)).astype(np.float32))
+        if self.cfg.drone_mass_variance > 0:
+            v = self.cfg.drone_mass_variance
+            self.per_drone_mass[:] = self.cfg.drone_mass * (
+                1.0 + np.random.uniform(-v, v, size=(self.num_worlds, self.N + self.M)).astype(np.float32))
+
     def _randomize_wind(self):
         """Generate random wind direction and magnitude."""
         if self.wind_enabled:
@@ -1286,14 +1360,25 @@ class NewtonSwarmEnv(VecEnv):
                 self.wind_force[w] = [mag * np.cos(angle), mag * np.sin(angle), 0.0]
 
     def _apply_wind(self):
-        """Apply wind forces to all drones."""
+        """Apply wind forces + random gusts to all drones."""
         body_f_np = self.state_0.body_f.numpy()
+        gust_prob = self.cfg.wind_gust_prob
+        gust_force = self.cfg.wind_gust_force
         for w in range(self.num_worlds):
+            # Steady wind
+            wf = self.wind_force[w].copy()
+            # Random gust: sudden strong burst
+            if gust_prob > 0 and np.random.random() < gust_prob:
+                gust_angle = np.random.uniform(0, 2 * np.pi)
+                gust_mag = np.random.uniform(0.5, 1.0) * gust_force
+                wf[0] += gust_mag * np.cos(gust_angle)
+                wf[1] += gust_mag * np.sin(gust_angle)
+                wf[2] += np.random.uniform(-0.3, 0.3) * gust_force  # vertical gust component
             for i in range(self._num_drones):
                 bidx = w * self.bodies_per_world + i
-                body_f_np[bidx][0] += self.wind_force[w][0]
-                body_f_np[bidx][1] += self.wind_force[w][1]
-                body_f_np[bidx][2] += self.wind_force[w][2]
+                body_f_np[bidx][0] += wf[0]
+                body_f_np[bidx][1] += wf[1]
+                body_f_np[bidx][2] += wf[2]
         self.state_0.body_f = wp.array(body_f_np, dtype=wp.spatial_vector, device=self.device)
 
     def close(self):

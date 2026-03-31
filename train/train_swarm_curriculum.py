@@ -69,6 +69,22 @@ STAGES = [
         "attacker_speed_scale": 1.0,
         "attacker_strategy": "mixed",
     },
+    {
+        "name": "stage5_realworld",
+        "desc": "Real-world: gusts + sensor limits + drone variance + speed variance",
+        "wind_enabled": True,
+        "wind_max_force": 0.5,
+        "wind_gust_prob": 0.03,
+        "wind_gust_force": 1.0,
+        "obstacle_dynamic": True,
+        "obstacle_max_speed": 0.5,
+        "obs_noise_std": 0.03,
+        "attacker_speed_scale": 1.0,
+        "attacker_strategy": "mixed",
+        "sensor_range": 5.0,
+        "attacker_speed_variance": 0.15,
+        "drone_mass_variance": 0.1,
+    },
 ]
 
 
@@ -90,7 +106,7 @@ def train_stage(args, stage, stage_idx, resume_path=None):
     tag = f"swarm_{args.defenders}v{args.attackers}_{stage['name']}"
 
     print(f"\n{'='*60}")
-    print(f"  Stage {stage_idx+1}/4: {stage['desc']}")
+    print(f"  Stage {stage_idx+1}/{len(STAGES)}: {stage['desc']}")
     print(f"  Config: {args.defenders}v{args.attackers} | {tag}")
     if resume_path:
         print(f"  Resume: {resume_path}")
@@ -108,7 +124,7 @@ def train_stage(args, stage, stage_idx, resume_path=None):
     eval_env = NewtonSwarmEnv(num_worlds=max(4, args.num_worlds // 16), config=eval_cfg)
 
     if resume_path:
-        model = SAC.load(resume_path, env=env)
+        model = SAC.load(resume_path, env=env, device="cuda")
     else:
         model = SAC(
             policy="MlpPolicy",
@@ -124,6 +140,7 @@ def train_stage(args, stage, stage_idx, resume_path=None):
             tensorboard_log=train_cfg.tensorboard_log,
             verbose=1,
             seed=train_cfg.seed,
+            device="cuda",
         )
 
     checkpoint_cb = CheckpointCallback(
