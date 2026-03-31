@@ -450,6 +450,8 @@ def compute_rewards_intercept_kernel(
     obstacle_proximity_penalty: float,
     obstacle_collision_radius: float,
     obstacle_collision_penalty: float,
+    leash_radius: float,
+    leash_penalty: float,
     bodies_per_world: int,
     defender_offset: int,
     attacker_offset: int,
@@ -458,7 +460,7 @@ def compute_rewards_intercept_kernel(
     info_intercepted: wp.array(dtype=int),
     info_target_reached: wp.array(dtype=int),
 ):
-    """Reward for intercept mode v3: approach + closing speed + urgency + obstacles."""
+    """Reward for intercept mode v3: approach + closing speed + urgency + obstacles + leash."""
     world_id = wp.tid()
     def_idx = world_id * bodies_per_world + defender_offset
     att_idx = world_id * bodies_per_world + attacker_offset
@@ -511,6 +513,11 @@ def compute_rewards_intercept_kernel(
                 # Proximity warning zone
                 elif d < obstacle_danger_radius:
                     reward -= (obstacle_danger_radius - d) * obstacle_proximity_penalty
+
+        # Defender leash: penalize straying too far from target
+        def_to_target = wp.length(def_pos - target_pos)
+        if def_to_target > leash_radius:
+            reward -= (def_to_target - leash_radius) * leash_penalty
 
     rewards_out[world_id] = reward
     prev_dist[world_id] = dist
@@ -1470,6 +1477,8 @@ class NewtonDroneEnv(VecEnv):
                     self.cfg.obstacle_proximity_penalty,
                     self.cfg.obstacle_collision_radius,
                     self.cfg.obstacle_collision_penalty,
+                    self.cfg.defender_leash_radius,
+                    self.cfg.defender_leash_penalty,
                     self.bodies_per_world, 0, 1,
                     self.rewards_buf, self.term_buf,
                     self.info_buf_a, self.info_buf_b,

@@ -958,6 +958,11 @@ class NewtonSwarmEnv(VecEnv):
                             # Multiple defenders on same attacker — small penalty
                             reward -= 0.3
 
+                    # Defender leash: penalize straying too far from target
+                    def_to_target = np.linalg.norm(def_positions[d] - target)
+                    if def_to_target > self.cfg.defender_leash_radius:
+                        reward -= (def_to_target - self.cfg.defender_leash_radius) * self.cfg.defender_leash_penalty
+
                     reward -= 0.05
 
                     # Obstacle penalties

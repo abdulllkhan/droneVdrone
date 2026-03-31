@@ -400,5 +400,32 @@ class TestAttackerStrategies:
         e.close()
 
 
+class TestDefenderLeash:
+    def test_leash_swarm_runs(self):
+        """Swarm env with leash should step without errors."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        defender_leash_radius=2.0, defender_leash_penalty=5.0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(10):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_leash_tight_vs_loose(self):
+        """Tight leash should produce finite rewards in swarm env."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        defender_leash_radius=1.0, defender_leash_penalty=10.0)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(20):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

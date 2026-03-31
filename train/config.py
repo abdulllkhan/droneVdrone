@@ -71,6 +71,8 @@ class EnvConfig:
     max_defenders: int = 3        # Max for obs padding (fixed obs dim)
     max_attackers: int = 3        # Max for obs padding (fixed obs dim)
     coordination_bonus: float = 0.5  # Reward for defender spread
+    defender_leash_radius: float = 3.0   # Max distance from target before penalty kicks in
+    defender_leash_penalty: float = 2.0  # Penalty scale for exceeding leash radius
 
     # Domain randomization
     wind_enabled: bool = False        # Enable random wind forces
