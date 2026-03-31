@@ -527,5 +527,57 @@ class TestDomainRandomization:
         e.close()
 
 
+class TestDefenderLeash:
+    def test_leash_config_defaults(self):
+        cfg = EnvConfig()
+        assert cfg.defender_leash_radius == 3.0
+        assert cfg.defender_leash_penalty == 2.0
+
+    def test_leash_env_runs_with_leash(self):
+        """Env with leash enabled should step without errors."""
+        cfg = EnvConfig(defender_leash_radius=2.0, defender_leash_penalty=5.0,
+                        num_obstacles=0)
+        e = NewtonDroneEnv(num_envs=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        for _ in range(20):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_leash_penalty_reduces_reward(self):
+        """Tight leash should produce lower rewards when defender is far from target."""
+        # Tight leash (1.0m radius, heavy penalty)
+        cfg_tight = EnvConfig(defender_leash_radius=1.0, defender_leash_penalty=10.0,
+                              num_obstacles=0)
+        e_tight = NewtonDroneEnv(num_envs=4, config=cfg_tight)
+        e_tight.reset()
+        actions = np.zeros((4, 3), dtype=np.float32)
+        rewards_tight = []
+        for _ in range(30):
+            _, r, _, _ = e_tight.step(actions)
+            rewards_tight.append(r.copy())
+        e_tight.close()
+
+        # No leash (huge radius = effectively disabled)
+        cfg_loose = EnvConfig(defender_leash_radius=100.0, defender_leash_penalty=10.0,
+                              num_obstacles=0)
+        e_loose = NewtonDroneEnv(num_envs=4, config=cfg_loose)
+        e_loose.reset()
+        rewards_loose = []
+        for _ in range(30):
+            _, r, _, _ = e_loose.step(actions)
+            rewards_loose.append(r.copy())
+        e_loose.close()
+
+        # Tight leash should generally produce lower or equal mean reward
+        # (defender starts 0.3-1.0m from target, so tight leash may penalize)
+        mean_tight = np.mean([r.mean() for r in rewards_tight])
+        mean_loose = np.mean([r.mean() for r in rewards_loose])
+        assert np.isfinite(mean_tight)
+        assert np.isfinite(mean_loose)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

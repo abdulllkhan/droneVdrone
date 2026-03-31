@@ -71,13 +71,23 @@ class EnvConfig:
     max_defenders: int = 3        # Max for obs padding (fixed obs dim)
     max_attackers: int = 3        # Max for obs padding (fixed obs dim)
     coordination_bonus: float = 0.5  # Reward for defender spread
+    defender_leash_radius: float = 3.0   # Max distance from target before penalty kicks in
+    defender_leash_penalty: float = 2.0  # Penalty scale for exceeding leash radius
+    defender_zone_time_penalty: float = 0.1  # Per-step escalating penalty when outside leash radius
+    angular_coverage_bonus: float = 0.3  # Reward for defenders spreading angles around target
+    intercept_efficiency_bonus: float = 1.0  # Bonus when closest defender to attacker intercepts it
 
     # Domain randomization
     wind_enabled: bool = False        # Enable random wind forces
     wind_max_force: float = 0.3       # Max wind force (Newtons)
     wind_change_freq: int = 48        # Wind direction changes every N steps
+    wind_gust_prob: float = 0.02      # Probability of sudden wind gust per step
+    wind_gust_force: float = 1.0      # Max gust force (Newtons) — much stronger than steady wind
     obs_noise_std: float = 0.0        # Gaussian noise on observations (0 = disabled)
     action_delay_steps: int = 0       # Action delay in steps (0 = disabled)
+    sensor_range: float = 0.0         # Max detection range (0 = unlimited). Beyond this, obs zeroed out.
+    drone_mass_variance: float = 0.0  # Mass randomization ±fraction (0.1 = ±10% of drone_mass)
+    attacker_speed_variance: float = 0.0  # Per-attacker speed randomization ±fraction
 
     # Phase-specific settings
     target_randomize_range: float = 2.0   # Random target radius (fly_to_target)
@@ -108,8 +118,8 @@ class TrainConfig:
     # Logging & checkpoints
     log_dir: str = "logs"
     model_dir: str = "models"
-    checkpoint_freq: int = 100_000
-    eval_freq: int = 5_000
+    checkpoint_freq: int = 10_000
+    eval_freq: int = 500          # Per step() call — with 256 sub-envs this evals every ~128K timesteps
     eval_episodes: int = 20
     tensorboard_log: str = "logs/tensorboard"
 
