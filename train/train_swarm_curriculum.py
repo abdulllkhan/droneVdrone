@@ -164,6 +164,8 @@ def train_stage(args, stage, stage_idx, resume_path=None):
 
     from stable_baselines3.common.type_aliases import TrainFreq, TrainFrequencyUnit
 
+    import sys
+    print(f"  Creating SAC model (buffer={train_cfg.buffer_size * args.defenders:,})...", flush=True)
     if resume_path:
         model = SAC.load(resume_path, env=env, device="cuda")
         model.gradient_steps = gradient_steps
@@ -187,6 +189,7 @@ def train_stage(args, stage, stage_idx, resume_path=None):
             seed=train_cfg.seed,
             device="cuda",
         )
+    print(f"  SAC model ready. Starting training...", flush=True)
 
     checkpoint_cb = CheckpointCallback(
         save_freq=train_cfg.checkpoint_freq,
