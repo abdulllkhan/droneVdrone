@@ -372,6 +372,44 @@ class NewtonSwarmEnv(VecEnv):
         self._compute_obs()
         return self.obs_buf.copy()
 
+    def reset_with_positions(self, defender_positions, attacker_positions, target_pos=None):
+        """Reset with user-specified drone positions.
+
+        Args:
+            defender_positions: list of (x, y, z) for each defender
+            attacker_positions: list of (x, y, z) for each attacker
+            target_pos: optional (x, y, z) for target
+        """
+        if target_pos is not None:
+            self.target_pos_wp = wp.vec3(*target_pos)
+            self.target_pos_np = np.array(target_pos, dtype=np.float32)
+
+        positions = np.zeros((self.num_worlds, self.bodies_per_world, 3), dtype=np.float32)
+        for d in range(min(len(defender_positions), self.N)):
+            positions[0, d] = defender_positions[d]
+        for a in range(min(len(attacker_positions), self.M)):
+            positions[0, self.N + a] = attacker_positions[a]
+
+        self.init_pos_buf = wp.array(
+            [[wp.vec3(float(positions[i, j, 0]),
+                      float(positions[i, j, 1]),
+                      float(positions[i, j, 2]))
+              for j in range(self.bodies_per_world)]
+             for i in range(self.num_worlds)],
+            dtype=wp.vec3, device=self.device
+        )
+
+        self._apply_init_positions(mask=None)
+        self.prev_dist_buf[:] = 0.0
+        self.step_count_buf.zero_()
+        self.prev_vel[:] = 0.0
+        self.eliminated_attackers[:] = False
+        self.eliminated_defenders[:] = False
+        self.outside_zone_steps[:] = 0.0
+        self._randomize_drone_variance()
+        self._compute_obs()
+        return self.obs_buf.copy()
+
     def step_async(self, actions):
         self._actions = np.asarray(actions, dtype=np.float32)
 
