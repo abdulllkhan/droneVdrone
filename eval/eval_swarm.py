@@ -221,6 +221,8 @@ def main():
                         choices=["direct", "flanking", "mixed"],
                         help="Scripted attacker strategy (ignored if --attacker-model set)")
     parser.add_argument("--output-dir", type=str, default="models")
+    parser.add_argument("--k-opponents", type=int, default=3)
+    parser.add_argument("--k-teammates", type=int, default=2)
     args = parser.parse_args()
 
     wp.init()
@@ -229,11 +231,31 @@ def main():
     from train.config import EnvConfig
 
     model = SAC.load(args.model)
+
+    # Auto-detect K config from model obs dim
+    model_obs_dim = model.observation_space.shape[0]
+    k_opp, k_tm = args.k_opponents, args.k_teammates
+    from envs.newton_swarm_env import compute_obs_dim
+    if compute_obs_dim(k_opp, k_tm) != model_obs_dim:
+        # Find K combo that matches obs_dim, preferring k_opp > k_tm (most common)
+        best = None
+        for ko in range(1, 10):
+            for kt in range(1, 10):
+                if compute_obs_dim(ko, kt) == model_obs_dim:
+                    if best is None or abs(ko - kt) < abs(best[0] - best[1]):
+                        best = (ko, kt)
+        if best:
+            k_opp, k_tm = best
+            print(f"  Auto-detected K: k_opponents={k_opp}, k_teammates={k_tm} (obs_dim={model_obs_dim})")
+
     env_kwargs = dict(
         num_defenders=args.defenders,
         num_attackers=args.attackers,
         num_obstacles=args.obstacles,
         attacker_strategy=args.strategy,
+        k_opponents=k_opp,
+        k_teammates=k_tm,
+        kamikaze=True,
     )
     if args.attacker_model:
         env_kwargs["attacker_model_path"] = args.attacker_model

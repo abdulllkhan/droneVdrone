@@ -68,8 +68,11 @@ class EnvConfig:
     # Multi-drone swarm
     num_defenders: int = 1        # N defenders per world
     num_attackers: int = 1        # M attackers per world
-    max_defenders: int = 3        # Max for obs padding (fixed obs dim)
-    max_attackers: int = 3        # Max for obs padding (fixed obs dim)
+    max_defenders: int = 3        # Max for obs padding (fixed obs dim) — DEPRECATED, use k_opponents/k_teammates
+    max_attackers: int = 3        # Max for obs padding (fixed obs dim) — DEPRECATED, use k_opponents/k_teammates
+    k_opponents: int = 3          # K-nearest opponents to observe (fixed obs dim, independent of swarm size)
+    k_teammates: int = 2          # K-nearest teammates to observe (fixed obs dim, independent of swarm size)
+    kamikaze: bool = True         # Defender is destroyed on interception (both drones eliminated)
     coordination_bonus: float = 0.5  # Reward for defender spread
     defender_leash_radius: float = 3.0   # Max distance from target before penalty kicks in
     defender_leash_penalty: float = 2.0  # Penalty scale for exceeding leash radius

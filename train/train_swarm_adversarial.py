@@ -54,6 +54,9 @@ def _realworld_kwargs(args):
         sensor_range=args.sensor_range,
         attacker_speed_variance=args.speed_var,
         drone_mass_variance=args.mass_var,
+        k_opponents=args.k_opponents,
+        k_teammates=args.k_teammates,
+        kamikaze=args.kamikaze,
     )
 
 
@@ -105,6 +108,9 @@ def train_swarm_role(role, args, train_cfg, frozen_model_path, resume_path=None,
         num_defenders=args.defenders,
         num_attackers=args.attackers,
         num_obstacles=args.obstacles,
+        k_opponents=args.k_opponents,
+        k_teammates=args.k_teammates,
+        kamikaze=args.kamikaze,
     )
     if mode == "evade":
         eval_kwargs["defender_model_path"] = frozen_model_path
@@ -209,6 +215,9 @@ def train_swarm_mixture_defender(args, train_cfg, attacker_pool, resume_path=Non
         num_attackers=args.attackers,
         num_obstacles=args.obstacles,
         attacker_model_paths=tuple(attacker_pool),
+        k_opponents=args.k_opponents,
+        k_teammates=args.k_teammates,
+        kamikaze=args.kamikaze,
     )
     eval_env = NewtonSwarmEnv(num_worlds=max(4, args.num_worlds // 16), config=eval_cfg)
 
@@ -299,6 +308,10 @@ def main():
     parser.add_argument("--gust-force", type=float, default=1.0, help="Max gust force (N)")
     parser.add_argument("--speed-var", type=float, default=0.0, help="Attacker speed variance ±fraction")
     parser.add_argument("--mass-var", type=float, default=0.0, help="Drone mass variance ±fraction")
+    parser.add_argument("--k-opponents", type=int, default=3, help="K nearest opponents to observe")
+    parser.add_argument("--k-teammates", type=int, default=2, help="K nearest teammates to observe")
+    parser.add_argument("--kamikaze", action="store_true", default=True, help="Defender destroyed on interception")
+    parser.add_argument("--no-kamikaze", dest="kamikaze", action="store_false", help="Disable kamikaze")
     args = parser.parse_args()
 
     wp.init()
