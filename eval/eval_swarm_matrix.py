@@ -31,7 +31,8 @@ from train.config import EnvConfig
 
 def eval_swarm_matchup(defender_path, attacker_path, n_def, n_att,
                        num_episodes=20, num_worlds=4, num_obstacles=3,
-                       max_steps=480, realworld=False, attacker_strategy="direct"):
+                       max_steps=480, realworld=False, attacker_strategy="direct",
+                       k_opponents=3, k_teammates=2, kamikaze=True):
     """Run episodes for one defender vs one attacker configuration.
 
     Returns dict with outcome counts and avg steps.
@@ -41,6 +42,9 @@ def eval_swarm_matchup(defender_path, attacker_path, n_def, n_att,
         num_attackers=n_att,
         num_obstacles=num_obstacles,
         attacker_strategy=attacker_strategy,
+        k_opponents=k_opponents,
+        k_teammates=k_teammates,
+        kamikaze=kamikaze,
     )
     if realworld:
         env_kwargs.update(
@@ -124,6 +128,10 @@ def main():
                         help="Evaluate under real-world conditions (wind, gusts, sensor limits, variance)")
     parser.add_argument("--strategies", nargs="+", default=["direct", "flanking", "mixed"],
                         help="Scripted attacker strategies to test")
+    parser.add_argument("--k-opponents", type=int, default=3, help="K nearest opponents to observe")
+    parser.add_argument("--k-teammates", type=int, default=2, help="K nearest teammates to observe")
+    parser.add_argument("--kamikaze", action="store_true", default=True, help="Kamikaze mode")
+    parser.add_argument("--no-kamikaze", dest="kamikaze", action="store_false")
     args = parser.parse_args()
 
     wp.init()
@@ -208,6 +216,9 @@ def main():
                 num_obstacles=args.obstacles,
                 realworld=args.realworld,
                 attacker_strategy=att_strategy,
+                k_opponents=args.k_opponents,
+                k_teammates=args.k_teammates,
+                kamikaze=args.kamikaze,
             )
 
             i = result["intercepted"]

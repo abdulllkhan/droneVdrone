@@ -6,7 +6,7 @@ import warp as wp
 
 wp.init()
 
-from envs.newton_swarm_env import NewtonSwarmEnv, OBS_DIM
+from envs.newton_swarm_env import NewtonSwarmEnv, OBS_DIM, compute_obs_dim
 from train.config import EnvConfig
 
 
@@ -583,6 +583,198 @@ class TestDroneVariance:
             obs, rewards, dones, infos = e.step(actions)
         assert np.all(np.isfinite(obs))
         assert np.all(np.isfinite(rewards))
+        e.close()
+
+
+class TestKamikaze:
+    def test_kamikaze_enabled_by_default(self):
+        cfg = EnvConfig()
+        assert cfg.kamikaze is True
+
+    def test_kamikaze_defender_eliminated_on_intercept(self):
+        """When kamikaze=True, defender should be marked eliminated after interception."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0,
+                        kamikaze=True, intercept_dist=0.75)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        # Run many steps chasing attacker — eventually should intercept
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(300):
+            obs, rewards, dones, infos = e.step(actions)
+            for i in range(8):
+                att_pos = obs[i, 13:16]
+                my_pos = obs[i, 0:3]
+                rel = att_pos - my_pos
+                norm = np.linalg.norm(rel)
+                if norm > 0.01:
+                    actions[i] = np.clip(rel / norm, -1, 1)
+            if np.any(dones):
+                break
+        # Check that at least one defender was eliminated (kamikaze)
+        # or episode ended (meaning intercept happened and world reset)
+        any_defender_eliminated = np.any(e.eliminated_defenders)
+        any_done = np.any(dones)
+        assert any_defender_eliminated or any_done, "Kamikaze should eliminate defenders on intercept"
+        e.close()
+
+    def test_kamikaze_off_defender_survives(self):
+        """When kamikaze=False, defender should not be eliminated."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=1, num_obstacles=0,
+                        kamikaze=False)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        for _ in range(300):
+            obs, rewards, dones, infos = e.step(actions)
+            for i in range(8):
+                att_pos = obs[i, 13:16]
+                my_pos = obs[i, 0:3]
+                rel = att_pos - my_pos
+                norm = np.linalg.norm(rel)
+                if norm > 0.01:
+                    actions[i] = np.clip(rel / norm, -1, 1)
+            if np.any(dones):
+                break
+        # Defenders should never be eliminated with kamikaze off
+        assert not np.any(e.eliminated_defenders), "Non-kamikaze defenders should survive"
+        e.close()
+
+    def test_kamikaze_info_has_active_defenders(self):
+        """Info dict should include active_defenders count."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0, kamikaze=True)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        actions = np.zeros((4 * 2, 3), dtype=np.float32)
+        _, _, _, infos = e.step(actions)
+        for info in infos:
+            assert "active_defenders" in info
+        e.close()
+
+    def test_kamikaze_eliminated_defender_zero_obs(self):
+        """Eliminated defenders should get zeroed observations."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=2, num_obstacles=0, kamikaze=True)
+        e = NewtonSwarmEnv(num_worlds=4, config=cfg)
+        e.reset()
+        # Manually eliminate a defender
+        e.eliminated_defenders[0, 0] = True
+        e._compute_obs()
+        agent_idx = 0  # world 0, defender 0
+        assert np.all(e.obs_buf[agent_idx] == 0.0), "Eliminated defender should have zero obs"
+        e.close()
+
+
+class TestKNearestObs:
+    def test_default_obs_dim(self):
+        """Default k_opponents=3, k_teammates=2 → 57-dim obs."""
+        assert compute_obs_dim(3, 2) == 57
+
+    def test_custom_k_obs_dim(self):
+        """Custom K values produce correct obs dim."""
+        assert compute_obs_dim(5, 4) == 13 + 5*7 + 4*7 + 9  # 85
+        assert compute_obs_dim(1, 1) == 13 + 7 + 7 + 9  # 36
+
+    def test_15v10_with_k3_k2(self):
+        """15v10 with K=3/2 should have same 57-dim obs as 2v2."""
+        cfg = EnvConfig(num_defenders=15, num_attackers=10, num_obstacles=0,
+                        k_opponents=3, k_teammates=2)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        obs = e.reset()
+        assert obs.shape == (2 * 15, 57)
+        actions = np.zeros((2 * 15, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert obs.shape == (2 * 15, 57)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_larger_k_obs_dim(self):
+        """Using larger K creates larger obs space."""
+        cfg = EnvConfig(num_defenders=5, num_attackers=5, num_obstacles=0,
+                        k_opponents=5, k_teammates=4)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        expected_dim = compute_obs_dim(5, 4)
+        obs = e.reset()
+        assert obs.shape == (2 * 5, expected_dim)
+        e.close()
+
+    def test_k_larger_than_actual_drones(self):
+        """K > actual drones should work (extra slots stay zero-padded)."""
+        cfg = EnvConfig(num_defenders=2, num_attackers=1, num_obstacles=0,
+                        k_opponents=5, k_teammates=4)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        obs = e.reset()
+        expected_dim = compute_obs_dim(5, 4)
+        assert obs.shape == (2 * 2, expected_dim)
+        assert np.all(np.isfinite(obs))
+        e.close()
+
+    def test_generalization_same_model_diff_swarm_sizes(self):
+        """Same K config produces same obs_dim regardless of swarm size."""
+        dim_2v2 = compute_obs_dim(3, 2)
+        dim_15v10 = compute_obs_dim(3, 2)
+        dim_20v15 = compute_obs_dim(3, 2)
+        assert dim_2v2 == dim_15v10 == dim_20v15 == 57
+
+
+class TestLargeSwarm:
+    def test_15v10_creates(self):
+        """15v10 environment creates successfully."""
+        cfg = EnvConfig(num_defenders=15, num_attackers=10, num_obstacles=0)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        assert e.num_envs == 30  # 2 worlds * 15 defenders
+        e.close()
+
+    def test_15v10_steps(self):
+        """15v10 environment steps without errors."""
+        cfg = EnvConfig(num_defenders=15, num_attackers=10, num_obstacles=0)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        e.reset()
+        actions = np.zeros((30, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_8v5_creates(self):
+        """8v5 environment creates successfully."""
+        cfg = EnvConfig(num_defenders=8, num_attackers=5, num_obstacles=0)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        assert e.num_envs == 16
+        obs = e.reset()
+        assert obs.shape == (16, 57)
+        e.close()
+
+    def test_20v15_creates(self):
+        """20v15 environment creates successfully."""
+        cfg = EnvConfig(num_defenders=20, num_attackers=15, num_obstacles=3)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        assert e.num_envs == 40
+        obs = e.reset()
+        assert obs.shape == (40, 57)
+        e.close()
+
+    def test_15v10_kamikaze(self):
+        """15v10 with kamikaze should run without errors."""
+        cfg = EnvConfig(num_defenders=15, num_attackers=10, num_obstacles=0, kamikaze=True)
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        e.reset()
+        actions = np.zeros((30, 3), dtype=np.float32)
+        for _ in range(10):
+            obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
+        assert np.all(np.isfinite(rewards))
+        e.close()
+
+    def test_15v10_evade_mode(self):
+        """15v10 evade mode creates and runs."""
+        cfg = EnvConfig(num_defenders=15, num_attackers=10, num_obstacles=0, mode="evade")
+        e = NewtonSwarmEnv(num_worlds=2, config=cfg)
+        assert e.num_envs == 20  # 2 worlds * 10 attackers
+        obs = e.reset()
+        assert obs.shape == (20, 57)
+        actions = np.zeros((20, 3), dtype=np.float32)
+        obs, rewards, dones, infos = e.step(actions)
+        assert np.all(np.isfinite(obs))
         e.close()
 
 

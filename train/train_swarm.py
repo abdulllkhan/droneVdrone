@@ -48,6 +48,9 @@ def train_swarm(args):
         num_defenders=args.defenders,
         num_attackers=args.attackers,
         num_obstacles=args.obstacles,
+        k_opponents=args.k_opponents,
+        k_teammates=args.k_teammates,
+        kamikaze=args.kamikaze,
         wind_enabled=args.wind,
         wind_max_force=args.wind_force,
         wind_gust_prob=args.gust_prob,
@@ -59,9 +62,14 @@ def train_swarm(args):
         drone_mass_variance=args.mass_var,
     )
 
+    from envs.newton_swarm_env import compute_obs_dim
+    obs_dim = compute_obs_dim(args.k_opponents, args.k_teammates)
+
     print(f"\n{'='*60}")
     print(f"  Swarm Training: {args.defenders}v{args.attackers}")
     print(f"  Worlds: {args.num_worlds} | Obstacles: {args.obstacles}")
+    print(f"  K-nearest: {args.k_opponents} opponents, {args.k_teammates} teammates (obs_dim={obs_dim})")
+    print(f"  Kamikaze: {'ON' if args.kamikaze else 'OFF'}")
     print(f"  Wind: {'ON' if args.wind else 'OFF'} | Noise: {args.noise}")
     print(f"  Strategy: {args.strategy}")
     print(f"  Timesteps: {args.timesteps:,}")
@@ -76,6 +84,9 @@ def train_swarm(args):
         num_defenders=args.defenders,
         num_attackers=args.attackers,
         num_obstacles=args.obstacles,
+        k_opponents=args.k_opponents,
+        k_teammates=args.k_teammates,
+        kamikaze=args.kamikaze,
     )
     eval_env = make_env(max(4, args.num_worlds // 16), eval_cfg)
 
@@ -161,6 +172,10 @@ if __name__ == "__main__":
     parser.add_argument("--gust-force", type=float, default=1.0, help="Max gust force (N)")
     parser.add_argument("--speed-var", type=float, default=0.0, help="Attacker speed variance ±fraction")
     parser.add_argument("--mass-var", type=float, default=0.0, help="Drone mass variance ±fraction")
+    parser.add_argument("--k-opponents", type=int, default=3, help="K nearest opponents to observe")
+    parser.add_argument("--k-teammates", type=int, default=2, help="K nearest teammates to observe")
+    parser.add_argument("--kamikaze", action="store_true", default=True, help="Defender destroyed on interception (default: on)")
+    parser.add_argument("--no-kamikaze", dest="kamikaze", action="store_false", help="Disable kamikaze")
     args = parser.parse_args()
 
     train_swarm(args)

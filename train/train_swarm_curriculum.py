@@ -96,6 +96,9 @@ def train_stage(args, stage, stage_idx, resume_path=None):
         num_defenders=args.defenders,
         num_attackers=args.attackers,
         num_obstacles=args.obstacles,
+        k_opponents=args.k_opponents,
+        k_teammates=args.k_teammates,
+        kamikaze=args.kamikaze,
     )
     # Apply stage-specific settings
     for k, v in stage.items():
@@ -107,7 +110,7 @@ def train_stage(args, stage, stage_idx, resume_path=None):
 
     print(f"\n{'='*60}")
     print(f"  Stage {stage_idx+1}/{len(STAGES)}: {stage['desc']}")
-    print(f"  Config: {args.defenders}v{args.attackers} | {tag}")
+    print(f"  Config: {args.defenders}v{args.attackers} | Kamikaze: {'ON' if args.kamikaze else 'OFF'} | {tag}")
     if resume_path:
         print(f"  Resume: {resume_path}")
     print(f"  Timesteps: {args.timesteps_per_stage:,}")
@@ -120,6 +123,9 @@ def train_stage(args, stage, stage_idx, resume_path=None):
         num_defenders=args.defenders,
         num_attackers=args.attackers,
         num_obstacles=args.obstacles,
+        k_opponents=args.k_opponents,
+        k_teammates=args.k_teammates,
+        kamikaze=args.kamikaze,
     )
     eval_env = NewtonSwarmEnv(num_worlds=max(4, args.num_worlds // 16), config=eval_cfg)
 
@@ -185,7 +191,11 @@ def main():
     parser.add_argument("--timesteps-per-stage", type=int, default=1_000_000)
     parser.add_argument("--obstacles", type=int, default=3)
     parser.add_argument("--resume", type=str, default="", help="Resume from model")
-    parser.add_argument("--start-stage", type=int, default=0, help="Start from stage (0-3)")
+    parser.add_argument("--start-stage", type=int, default=0, help="Start from stage (0-4)")
+    parser.add_argument("--k-opponents", type=int, default=3, help="K nearest opponents to observe")
+    parser.add_argument("--k-teammates", type=int, default=2, help="K nearest teammates to observe")
+    parser.add_argument("--kamikaze", action="store_true", default=True, help="Defender destroyed on interception")
+    parser.add_argument("--no-kamikaze", dest="kamikaze", action="store_false", help="Disable kamikaze")
     args = parser.parse_args()
 
     wp.init()
