@@ -12,7 +12,7 @@ class EnvConfig:
     episode_secs: float = 10.0    # Max episode duration
 
     # Arena
-    arena_bounds: float = 4.0     # XY bounds (meters)
+    arena_bounds: float = 4.0     # XY bounds (meters) — half-width, total = 2x this
     altitude_max: float = 4.0     # Max altitude (meters)
     altitude_min: float = 0.3     # Min altitude (meters) — prevents ground crashes
 
@@ -22,6 +22,7 @@ class EnvConfig:
 
     # Attacker
     attacker_speed_scale: float = 1.0  # Scripted attacker speed (1.0 = full speed)
+    defender_speed_limit: float = 1.25  # Defender max speed (m/s)
     attacker_speed_limit: float = 1.4  # RL attacker max speed (m/s) — slightly faster than defender (~1.25)
     attacker_strategy: str = "direct"  # Scripted attacker behavior: "direct", "flanking", "mixed"
 
@@ -35,6 +36,9 @@ class EnvConfig:
     target_pos: tuple = (0.0, 0.0, 2.0)       # Default target pos (overridden if randomized)
     target_alt_randomize: bool = True          # Randomize target altitude each episode
     target_alt_range_intercept: tuple = (1.0, 3.0)  # Target altitude range for intercept/evade
+
+    # Arena scale preset — "small" (8m lab) or "realistic" (300m field)
+    arena_scale: str = "small"    # "small" or "realistic" — sets defaults if not overridden
 
     # Force model (direct body forces, no propeller simulation)
     # Drone mass ~0.250kg (250g quadrotor), hover force = mass * g = 2.45N
@@ -98,6 +102,44 @@ class EnvConfig:
     arrival_dist: float = 0.5             # Arrival threshold (fly_to_target/chase) — matches intercept_dist
     arrival_bonus: float = 500.0          # Large reward for reaching target (must dominate dense rewards)
     moving_target_speed: float = 0.5      # Target speed (chase mode, m/s)
+
+    def apply_realistic_scale(self):
+        """Apply 300m x 300m field scale — call this to override defaults for realistic arena.
+
+        Real drone speeds: 15-20 m/s for racing drones, 5-10 m/s for commercial.
+        We use 15 m/s defender, 18 m/s attacker for fast-paced realistic combat.
+        """
+        self.arena_bounds = 150.0        # ±150m = 300m x 300m field
+        self.altitude_max = 120.0        # 120m max altitude (FAA limit)
+        self.altitude_min = 2.0          # 2m min altitude
+        self.intercept_dist = 2.0        # 2m intercept radius (realistic drone collision)
+        self.target_reached_dist = 1.0   # 1m target threshold
+        self.defender_speed_limit = 15.0  # 15 m/s (~54 km/h)
+        self.attacker_speed_limit = 18.0 # 18 m/s (~65 km/h)
+        self.attacker_speed_scale = 1.0
+        self.episode_secs = 30.0         # 30s episodes (covers 300m at 15 m/s)
+        self.attacker_dist_range = (50.0, 120.0)   # Attackers spawn 50-120m from target
+        self.attacker_alt_range = (10.0, 60.0)
+        self.defender_dist_range = (5.0, 30.0)      # Defenders close to target
+        self.defender_alt_range = (10.0, 40.0)
+        self.target_pos = (0.0, 0.0, 20.0)
+        self.target_alt_range_intercept = (10.0, 50.0)
+        self.target_alt_range = (5.0, 30.0)
+        self.target_randomize_range = 50.0
+        # Force model scales with speed
+        self.force_kp = 30.0             # Higher gain for faster drones
+        self.force_kd = 10.0
+        self.max_force = 80.0            # Much stronger forces for high-speed maneuvering
+        # Larger leash for bigger arena
+        self.defender_leash_radius = 80.0
+        # Obstacles scale
+        self.obstacle_radius = 2.0
+        self.obstacle_height = 30.0
+        self.obstacle_placement_range = 60.0
+        self.obstacle_min_spacing = 15.0
+        self.obstacle_danger_radius = 5.0
+        self.obstacle_collision_radius = 3.0
+        return self
 
 
 @dataclass

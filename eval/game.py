@@ -460,7 +460,7 @@ class SwarmGame:
     def __init__(self, defender_path=None, num_defenders=2, num_attackers=2,
                  arena_size=8.0, obstacles=3, attacker_model_path=None,
                  attacker_strategy="direct", k_opponents=3, k_teammates=2,
-                 kamikaze=True):
+                 kamikaze=True, realistic=False):
         from envs.newton_swarm_env import NewtonSwarmEnv, compute_obs_dim
 
         self.N = num_defenders
@@ -505,6 +505,13 @@ class SwarmGame:
         if attacker_model_path:
             cfg_kwargs["attacker_model_path"] = attacker_model_path
         cfg = EnvConfig(**cfg_kwargs)
+        if realistic:
+            cfg.apply_realistic_scale()
+            cfg.arena_bounds = arena_size
+            cfg.num_defenders = num_defenders
+            cfg.num_attackers = num_attackers
+            cfg.num_obstacles = obstacles
+            cfg.target_pos = (0.0, 0.0, 20.0)
         self.cfg = cfg
         self.env = NewtonSwarmEnv(num_worlds=1, config=cfg)
 
@@ -515,7 +522,7 @@ class SwarmGame:
         self.screen_w, self.screen_h = 1200, 800
         self.cam_azimuth = 45.0
         self.cam_elevation = 30.0
-        self.cam_zoom = 80.0
+        self.cam_zoom = max(2.0, 600.0 / arena_size)
         self.cam_target = [0, 0, 1.5]
 
         # Colors for multiple drones (enough for 15+)
@@ -624,12 +631,14 @@ class SwarmGame:
             screen.fill(BLACK)
 
             # Draw grid
-            for g in range(-8, 9):
-                p1 = self.world_to_screen((g, -8, 0))
-                p2 = self.world_to_screen((g, 8, 0))
+            grid_extent = int(self.cfg.arena_bounds)
+            grid_step = max(1, grid_extent // 8)
+            for g in range(-grid_extent, grid_extent + 1, grid_step):
+                p1 = self.world_to_screen((g, -grid_extent, 0))
+                p2 = self.world_to_screen((g, grid_extent, 0))
                 pygame.draw.line(screen, (30, 30, 30), p1, p2, 1)
-                p1 = self.world_to_screen((-8, g, 0))
-                p2 = self.world_to_screen((8, g, 0))
+                p1 = self.world_to_screen((-grid_extent, g, 0))
+                p2 = self.world_to_screen((grid_extent, g, 0))
                 pygame.draw.line(screen, (30, 30, 30), p1, p2, 1)
 
             # Target
@@ -714,25 +723,31 @@ class SpawnGame:
     """
 
     def __init__(self, defender_path=None, arena_size=8.0, obstacles=0,
-                 k_opponents=3, k_teammates=2, kamikaze=True):
+                 k_opponents=3, k_teammates=2, kamikaze=True, realistic=False):
         self.defender_path = defender_path
         self.arena_size = arena_size
         self.obstacles = obstacles
         self.k_opponents = k_opponents
         self.k_teammates = k_teammates
         self.kamikaze = kamikaze
+        self.realistic = realistic
 
         self.screen_w, self.screen_h = 1200, 800
         self.cam_azimuth = 45.0
         self.cam_elevation = 30.0
-        self.cam_zoom = 80.0
+        # Scale camera zoom to arena size
+        self.cam_zoom = max(2.0, 600.0 / arena_size)
         self.cam_target = [0, 0, 0]
 
         # Placement state
         self.defenders = []     # list of [x, y, z]
         self.attackers = []     # list of [x, y, z]
-        self.target_pos = [0.0, 0.0, 2.0]
-        self.place_altitude = 2.0
+        if realistic:
+            self.target_pos = [0.0, 0.0, 20.0]
+            self.place_altitude = 20.0
+        else:
+            self.target_pos = [0.0, 0.0, 2.0]
+            self.place_altitude = 2.0
         self.placing = True     # True = placement phase, False = simulation phase
         self.paused = False
 
@@ -876,6 +891,11 @@ class SpawnGame:
             k_teammates=k_tm,
             kamikaze=self.kamikaze,
         )
+        if self.realistic:
+            cfg.apply_realistic_scale()
+            cfg.arena_bounds = self.arena_size  # Keep user-specified arena size
+            cfg.target_pos = tuple(self.target_pos)
+            cfg.num_obstacles = self.obstacles
         self.env = NewtonSwarmEnv(num_worlds=1, config=cfg)
 
         if self.defender_path:
@@ -953,8 +973,11 @@ class SpawnGame:
                         self.target_pos = [wx, wy, self.place_altitude]
 
                 if event.type == pygame.MOUSEWHEEL:
-                    self.place_altitude = max(0.5, min(10.0,
-                        self.place_altitude + event.y * 0.5))
+                    alt_step = 5.0 if self.realistic else 0.5
+                    alt_max = 120.0 if self.realistic else 10.0
+                    alt_min = 2.0 if self.realistic else 0.5
+                    self.place_altitude = max(alt_min, min(alt_max,
+                        self.place_altitude + event.y * alt_step))
 
             keys = pygame.key.get_pressed()
             if keys[pygame.K_LEFT]: self.cam_azimuth -= 2
@@ -1107,7 +1130,13 @@ def main():
     parser.add_argument("--k-teammates", type=int, default=2)
     parser.add_argument("--kamikaze", action="store_true", default=True)
     parser.add_argument("--no-kamikaze", dest="kamikaze", action="store_false")
+    parser.add_argument("--realistic", action="store_true", default=False,
+                        help="Use 300m x 300m realistic field scale (15-18 m/s drones)")
     args = parser.parse_args()
+
+    # If realistic mode, default arena to 150m (300m total)
+    if args.realistic and args.arena == 8.0:
+        args.arena = 150.0
 
     wp.init()
 
@@ -1119,6 +1148,7 @@ def main():
             k_opponents=args.k_opponents,
             k_teammates=args.k_teammates,
             kamikaze=args.kamikaze,
+            realistic=args.realistic,
         )
     elif args.mode == "swarm":
         game = SwarmGame(
@@ -1132,6 +1162,7 @@ def main():
             k_opponents=args.k_opponents,
             k_teammates=args.k_teammates,
             kamikaze=args.kamikaze,
+            realistic=args.realistic,
         )
     else:
         game = DroneGame(

@@ -253,7 +253,7 @@ class NewtonSwarmEnv(VecEnv):
         self.drone_mass = self.cfg.drone_mass
         self.gravity = 9.81
 
-        self.defender_speed_limit = 0.15 * 30.0 * (1000.0 / 3600.0)  # ~1.25 m/s
+        self.defender_speed_limit = self.cfg.defender_speed_limit
         self.attacker_speed_limit = self.cfg.attacker_speed_limit
         self.attacker_speed = self.cfg.attacker_speed_scale * 0.8
         # Per-attacker speed array (randomized each episode if variance > 0)

@@ -110,7 +110,22 @@ def train_stage(args, stage, stage_idx, resume_path=None):
             env_kwargs[k] = v
 
     env_cfg = EnvConfig(**env_kwargs)
+    if args.realistic:
+        env_cfg.apply_realistic_scale()
+        # Restore user-specified overrides after scale preset
+        env_cfg.num_defenders = args.defenders
+        env_cfg.num_attackers = args.attackers
+        env_cfg.num_obstacles = args.obstacles
+        env_cfg.k_opponents = args.k_opponents
+        env_cfg.k_teammates = args.k_teammates
+        env_cfg.kamikaze = args.kamikaze
+        # Re-apply stage-specific settings
+        for k, v in stage.items():
+            if k not in ("name", "desc"):
+                setattr(env_cfg, k, v)
     tag = f"swarm_{args.defenders}v{args.attackers}_{stage['name']}"
+    if args.realistic:
+        tag += "_300m"
 
     print(f"\n{'='*60}")
     print(f"  Stage {stage_idx+1}/{len(STAGES)}: {stage['desc']}")
@@ -132,6 +147,11 @@ def train_stage(args, stage, stage_idx, resume_path=None):
         k_teammates=args.k_teammates,
         kamikaze=args.kamikaze,
     )
+    if args.realistic:
+        eval_cfg.apply_realistic_scale()
+        eval_cfg.num_defenders = args.defenders
+        eval_cfg.num_attackers = args.attackers
+        eval_cfg.num_obstacles = args.obstacles
     eval_env = NewtonSwarmEnv(num_worlds=max(4, args.num_worlds // 16), config=eval_cfg)
 
     # Maximize GPU utilization on DGX Spark (1536 CUDA cores, 128GB unified memory):
@@ -217,6 +237,8 @@ def main():
     parser.add_argument("--no-kamikaze", dest="kamikaze", action="store_false", help="Disable kamikaze")
     parser.add_argument("--batch-size", type=int, default=0, help="Override batch size (0 = use config default)")
     parser.add_argument("--buffer-size", type=int, default=0, help="Override buffer size (0 = use config default)")
+    parser.add_argument("--realistic", action="store_true", default=False,
+                        help="Use 300m x 300m realistic field scale (15-18 m/s drones)")
     args = parser.parse_args()
 
     wp.init()
