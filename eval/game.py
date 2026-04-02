@@ -459,11 +459,31 @@ class SwarmGame:
 
     def __init__(self, defender_path=None, num_defenders=2, num_attackers=2,
                  arena_size=8.0, obstacles=3, attacker_model_path=None,
-                 attacker_strategy="direct"):
-        from envs.newton_swarm_env import NewtonSwarmEnv
+                 attacker_strategy="direct", k_opponents=3, k_teammates=2,
+                 kamikaze=True, realistic=False):
+        from envs.newton_swarm_env import NewtonSwarmEnv, compute_obs_dim
 
         self.N = num_defenders
         self.M = num_attackers
+        self.kamikaze = kamikaze
+
+        # Auto-detect K from model if provided
+        if defender_path:
+            temp_model = SAC.load(defender_path, device="cpu")
+            model_obs_dim = temp_model.observation_space.shape[0]
+            expected = compute_obs_dim(k_opponents, k_teammates)
+            if model_obs_dim != expected:
+                for ko in range(1, 10):
+                    for kt in range(1, 10):
+                        if compute_obs_dim(ko, kt) == model_obs_dim:
+                            if abs(ko - kt) <= abs(k_opponents - k_teammates) or \
+                               compute_obs_dim(k_opponents, k_teammates) != model_obs_dim:
+                                k_opponents, k_teammates = ko, kt
+                            break
+                    if compute_obs_dim(k_opponents, k_teammates) == model_obs_dim:
+                        break
+                print(f"  Auto K: k_opponents={k_opponents}, k_teammates={k_teammates} (obs={model_obs_dim})")
+            del temp_model
 
         cfg_kwargs = dict(
             mode="intercept",
@@ -478,10 +498,20 @@ class SwarmGame:
             altitude_max=4.0,
             num_obstacles=obstacles,
             attacker_strategy=attacker_strategy,
+            k_opponents=k_opponents,
+            k_teammates=k_teammates,
+            kamikaze=kamikaze,
         )
         if attacker_model_path:
             cfg_kwargs["attacker_model_path"] = attacker_model_path
         cfg = EnvConfig(**cfg_kwargs)
+        if realistic:
+            cfg.apply_realistic_scale()
+            cfg.arena_bounds = arena_size
+            cfg.num_defenders = num_defenders
+            cfg.num_attackers = num_attackers
+            cfg.num_obstacles = obstacles
+            cfg.target_pos = (0.0, 0.0, 20.0)
         self.cfg = cfg
         self.env = NewtonSwarmEnv(num_worlds=1, config=cfg)
 
@@ -492,12 +522,21 @@ class SwarmGame:
         self.screen_w, self.screen_h = 1200, 800
         self.cam_azimuth = 45.0
         self.cam_elevation = 30.0
-        self.cam_zoom = 80.0
+        self.cam_zoom = max(2.0, 600.0 / arena_size)
         self.cam_target = [0, 0, 1.5]
 
-        # Colors for multiple drones
-        self.def_colors = [BLUE, (100, 150, 255), (50, 200, 255)]
-        self.att_colors = [RED, (255, 100, 100), (255, 50, 150)]
+        # Colors for multiple drones (enough for 15+)
+        self.def_colors = [
+            BLUE, (100, 150, 255), (50, 200, 255), (0, 180, 220),
+            (70, 130, 255), (30, 160, 240), (90, 200, 255), (0, 140, 200),
+            (60, 180, 255), (20, 120, 240), (80, 210, 255), (40, 170, 230),
+            (10, 190, 250), (100, 220, 255), (50, 150, 220),
+        ]
+        self.att_colors = [
+            RED, (255, 100, 100), (255, 50, 150), (255, 80, 50),
+            (220, 60, 60), (255, 120, 80), (200, 40, 100), (255, 150, 50),
+            (240, 70, 120), (255, 90, 70),
+        ]
 
     def world_to_screen(self, pos):
         x, y, z = pos[0] - self.cam_target[0], pos[1] - self.cam_target[1], pos[2] - self.cam_target[2]
@@ -592,12 +631,14 @@ class SwarmGame:
             screen.fill(BLACK)
 
             # Draw grid
-            for g in range(-8, 9):
-                p1 = self.world_to_screen((g, -8, 0))
-                p2 = self.world_to_screen((g, 8, 0))
+            grid_extent = int(self.cfg.arena_bounds)
+            grid_step = max(1, grid_extent // 8)
+            for g in range(-grid_extent, grid_extent + 1, grid_step):
+                p1 = self.world_to_screen((g, -grid_extent, 0))
+                p2 = self.world_to_screen((g, grid_extent, 0))
                 pygame.draw.line(screen, (30, 30, 30), p1, p2, 1)
-                p1 = self.world_to_screen((-8, g, 0))
-                p2 = self.world_to_screen((8, g, 0))
+                p1 = self.world_to_screen((-grid_extent, g, 0))
+                p2 = self.world_to_screen((grid_extent, g, 0))
                 pygame.draw.line(screen, (30, 30, 30), p1, p2, 1)
 
             # Target
@@ -616,8 +657,15 @@ class SwarmGame:
             for d in range(self.N):
                 bidx = d
                 pos = body_q[bidx][:3].tolist()
-                color = self.def_colors[d % len(self.def_colors)]
-                self.draw_drone(screen, pos, color, f"D{d+1}", size=12)
+                eliminated = self.env.eliminated_defenders[0, d]
+                if not eliminated:
+                    color = self.def_colors[d % len(self.def_colors)]
+                    self.draw_drone(screen, pos, color, f"D{d+1}", size=12)
+                else:
+                    # Draw small grey X for eliminated defender
+                    sx, sy = self.world_to_screen(pos)
+                    pygame.draw.line(screen, (80, 80, 80), (sx-4, sy-4), (sx+4, sy+4), 2)
+                    pygame.draw.line(screen, (80, 80, 80), (sx-4, sy+4), (sx+4, sy-4), 2)
 
             # Draw attackers
             for a in range(self.M):
@@ -627,12 +675,17 @@ class SwarmGame:
                 if not eliminated:
                     color = self.att_colors[a % len(self.att_colors)]
                     self.draw_drone(screen, pos, color, f"A{a+1}", size=12)
+                else:
+                    sx, sy = self.world_to_screen(pos)
+                    pygame.draw.line(screen, (80, 80, 80), (sx-4, sy-4), (sx+4, sy+4), 2)
+                    pygame.draw.line(screen, (80, 80, 80), (sx-4, sy+4), (sx+4, sy-4), 2)
 
             # HUD
-            active = self.M - np.sum(self.env.eliminated_attackers[0])
+            active_att = self.M - np.sum(self.env.eliminated_attackers[0])
+            active_def = self.N - np.sum(self.env.eliminated_defenders[0])
             hud_lines = [
-                f"Step: {step}  Active Attackers: {active}/{self.M}",
-                f"Intercepts: {intercepts}  Target Hits: {target_hits}",
+                f"Step: {step}  Defenders: {active_def}/{self.N}  Attackers: {active_att}/{self.M}",
+                f"Intercepts: {intercepts}  Target Hits: {target_hits}  {'KAMIKAZE' if self.kamikaze else ''}",
                 f"Controls: Arrows=camera  +/-=zoom  R=reset  Q=quit",
             ]
             for i, line in enumerate(hud_lines):
@@ -645,10 +698,418 @@ class SwarmGame:
         pygame.quit()
 
 
+ORANGE = (255, 165, 0)
+PURPLE = (180, 100, 255)
+
+
+class SpawnGame:
+    """Interactive spawn mode — place defenders and attackers, then watch them fight.
+
+    Controls (Placement Phase):
+      Left-click     — Place defender (blue diamond)
+      Right-click    — Place attacker (red diamond)
+      Middle-click   — Place/move target (green)
+      Scroll wheel   — Adjust altitude for next placement
+      Enter          — Start simulation with placed drones
+      C              — Clear all placements
+      U              — Undo last placement
+
+    Controls (Simulation Phase):
+      Arrow keys     — Rotate camera
+      +/-            — Zoom
+      R              — Reset to placement phase
+      P              — Pause/resume
+      Q / ESC        — Quit
+    """
+
+    def __init__(self, defender_path=None, arena_size=8.0, obstacles=0,
+                 k_opponents=3, k_teammates=2, kamikaze=True, realistic=False):
+        self.defender_path = defender_path
+        self.arena_size = arena_size
+        self.obstacles = obstacles
+        self.k_opponents = k_opponents
+        self.k_teammates = k_teammates
+        self.kamikaze = kamikaze
+        self.realistic = realistic
+
+        self.screen_w, self.screen_h = 1200, 800
+        self.cam_azimuth = 45.0
+        self.cam_elevation = 30.0
+        # Scale camera zoom to arena size
+        self.cam_zoom = max(2.0, 600.0 / arena_size)
+        self.cam_target = [0, 0, 0]
+
+        # Placement state
+        self.defenders = []     # list of [x, y, z]
+        self.attackers = []     # list of [x, y, z]
+        if realistic:
+            self.target_pos = [0.0, 0.0, 20.0]
+            self.place_altitude = 20.0
+        else:
+            self.target_pos = [0.0, 0.0, 2.0]
+            self.place_altitude = 2.0
+        self.placing = True     # True = placement phase, False = simulation phase
+        self.paused = False
+
+        # Simulation state
+        self.env = None
+        self.model = None
+        self.step_count = 0
+        self.intercepts = 0
+        self.target_hits = 0
+
+        # Color arrays
+        self.def_colors = [
+            BLUE, (100, 150, 255), (50, 200, 255), (0, 180, 220),
+            (70, 130, 255), (30, 160, 240), (90, 200, 255), (0, 140, 200),
+            (60, 180, 255), (20, 120, 240), (80, 210, 255), (40, 170, 230),
+            (10, 190, 250), (100, 220, 255), (50, 150, 220),
+            (0, 100, 180), (70, 200, 240), (30, 130, 200), (90, 170, 255),
+            (10, 160, 210),
+        ]
+        self.att_colors = [
+            RED, (255, 100, 100), (255, 50, 150), (255, 80, 50),
+            (220, 60, 60), (255, 120, 80), (200, 40, 100), (255, 150, 50),
+            (240, 70, 120), (255, 90, 70),
+            (200, 50, 50), (255, 130, 100), (230, 60, 80), (255, 80, 130),
+            (210, 40, 70),
+        ]
+
+    def world_to_screen(self, pos):
+        x = pos[0] - self.cam_target[0]
+        y = pos[1] - self.cam_target[1]
+        z = pos[2] - self.cam_target[2]
+        az = math.radians(self.cam_azimuth)
+        el = math.radians(self.cam_elevation)
+        sx = x * math.cos(az) - y * math.sin(az)
+        sy = -(x * math.sin(az) + y * math.cos(az)) * math.sin(el) + z * math.cos(el)
+        px = int(self.screen_w / 2 + sx * self.cam_zoom)
+        py = int(self.screen_h / 2 - sy * self.cam_zoom)
+        return px, py
+
+    def screen_to_world(self, sx, sy):
+        """Convert screen click to world XY at current placement altitude."""
+        az = math.radians(self.cam_azimuth)
+        el = math.radians(self.cam_elevation)
+
+        # Inverse of projection (solve for x, y given z = place_altitude)
+        dx = (sx - self.screen_w / 2) / self.cam_zoom
+        dy = -(sy - self.screen_h / 2) / self.cam_zoom
+
+        z = self.place_altitude - self.cam_target[2]
+        # dy = -(x*sin(az)+y*cos(az))*sin(el) + z*cos(el)
+        # dx = x*cos(az) - y*sin(az)
+        # From: dy - z*cos(el) = -(x*sin(az)+y*cos(az))*sin(el)
+        ry = -(dy - z * math.cos(el)) / max(math.sin(el), 0.01)
+        # dx = x*cos(az) - y*sin(az)
+        # ry = x*sin(az) + y*cos(az)
+        cos_az = math.cos(az)
+        sin_az = math.sin(az)
+        # Solve: dx = x*cos - y*sin, ry = x*sin + y*cos
+        # x = dx*cos + ry*sin, y = ry*cos - dx*sin
+        wx = dx * cos_az + ry * sin_az + self.cam_target[0]
+        wy = ry * cos_az - dx * sin_az + self.cam_target[1]
+        return wx, wy
+
+    def draw_grid(self, screen):
+        b = int(self.arena_size)
+        step = max(1, b // 8)
+        for i in range(-b, b + 1, step):
+            p1 = self.world_to_screen((i, -b, 0))
+            p2 = self.world_to_screen((i, b, 0))
+            pygame.draw.line(screen, (30, 30, 30), p1, p2, 1)
+            p1 = self.world_to_screen((-b, i, 0))
+            p2 = self.world_to_screen((b, i, 0))
+            pygame.draw.line(screen, (30, 30, 30), p1, p2, 1)
+
+    def draw_arena_bounds(self, screen):
+        b = self.arena_size
+        corners = [(-b, -b, 0), (b, -b, 0), (b, b, 0), (-b, b, 0)]
+        for i in range(4):
+            p1 = self.world_to_screen(corners[i])
+            p2 = self.world_to_screen(corners[(i + 1) % 4])
+            pygame.draw.line(screen, (60, 0, 0), p1, p2, 1)
+
+    def draw_drone_marker(self, screen, pos, color, label, size=12):
+        sx, sy = self.world_to_screen(pos)
+        # Ground shadow line
+        gx, gy = self.world_to_screen((pos[0], pos[1], 0))
+        pygame.draw.line(screen, (color[0]//3, color[1]//3, color[2]//3),
+                         (sx, sy), (gx, gy), 1)
+        # Diamond
+        points = [(sx, sy-size), (sx+size, sy), (sx, sy+size), (sx-size, sy)]
+        pygame.draw.polygon(screen, color, points)
+        pygame.draw.polygon(screen, WHITE, points, 1)
+        # Label
+        font = pygame.font.SysFont("monospace", 11)
+        text = font.render(label, True, WHITE)
+        screen.blit(text, (sx - text.get_width()//2, sy - size - 14))
+
+    def draw_target_marker(self, screen, pos):
+        sx, sy = self.world_to_screen(pos)
+        pygame.draw.circle(screen, GREEN, (sx, sy), 10, 2)
+        pygame.draw.line(screen, GREEN, (sx-14, sy), (sx+14, sy), 2)
+        pygame.draw.line(screen, GREEN, (sx, sy-14), (sx, sy+14), 2)
+        font = pygame.font.SysFont("monospace", 11)
+        text = font.render("TARGET", True, GREEN)
+        screen.blit(text, (sx - text.get_width()//2, sy + 14))
+
+    def _create_env(self):
+        """Create environment matching the placed drones."""
+        from envs.newton_swarm_env import NewtonSwarmEnv, compute_obs_dim
+
+        n_def = max(1, len(self.defenders))
+        n_att = max(1, len(self.attackers))
+
+        k_opp = self.k_opponents
+        k_tm = self.k_teammates
+
+        # Auto-detect K from model if provided
+        if self.defender_path:
+            temp_model = SAC.load(self.defender_path, device="cpu")
+            model_obs_dim = temp_model.observation_space.shape[0]
+            if compute_obs_dim(k_opp, k_tm) != model_obs_dim:
+                best = None
+                for ko in range(1, 10):
+                    for kt in range(1, 10):
+                        if compute_obs_dim(ko, kt) == model_obs_dim:
+                            if best is None or abs(ko - kt) < abs(best[0] - best[1]):
+                                best = (ko, kt)
+                if best:
+                    k_opp, k_tm = best
+            del temp_model
+
+        cfg = EnvConfig(
+            mode="intercept",
+            num_defenders=n_def,
+            num_attackers=n_att,
+            arena_bounds=self.arena_size,
+            episode_secs=30.0,
+            target_pos=tuple(self.target_pos),
+            num_obstacles=self.obstacles,
+            k_opponents=k_opp,
+            k_teammates=k_tm,
+            kamikaze=self.kamikaze,
+        )
+        if self.realistic:
+            cfg.apply_realistic_scale()
+            cfg.arena_bounds = self.arena_size  # Keep user-specified arena size
+            cfg.target_pos = tuple(self.target_pos)
+            cfg.num_obstacles = self.obstacles
+        self.env = NewtonSwarmEnv(num_worlds=1, config=cfg)
+
+        if self.defender_path:
+            self.model = SAC.load(self.defender_path, device="cpu")
+        else:
+            self.model = None
+
+        # Set custom positions
+        def_pos = [list(d) for d in self.defenders] if self.defenders else [[0, 0, 2]]
+        att_pos = [list(a) for a in self.attackers] if self.attackers else [[2, 0, 2]]
+        return self.env.reset_with_positions(def_pos, att_pos, self.target_pos)
+
+    def run(self):
+        pygame.init()
+        screen = pygame.display.set_mode((self.screen_w, self.screen_h))
+        pygame.display.set_caption("DroneVDrone — SPAWN MODE")
+        clock = pygame.time.Clock()
+        font = pygame.font.SysFont("monospace", 14)
+        font_big = pygame.font.SysFont("monospace", 18, bold=True)
+
+        obs = None
+        running = True
+        cursor_world = (0, 0)
+
+        while running:
+            mouse_pos = pygame.mouse.get_pos()
+            cursor_world = self.screen_to_world(*mouse_pos)
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+
+                if event.type == pygame.KEYDOWN:
+                    if event.key in (pygame.K_q, pygame.K_ESCAPE):
+                        running = False
+
+                    if self.placing:
+                        if event.key == pygame.K_RETURN and (self.defenders or self.attackers):
+                            # Start simulation
+                            self.placing = False
+                            self.step_count = 0
+                            self.intercepts = 0
+                            self.target_hits = 0
+                            obs = self._create_env()
+
+                        elif event.key == pygame.K_c:
+                            self.defenders.clear()
+                            self.attackers.clear()
+
+                        elif event.key == pygame.K_u:
+                            if self.attackers:
+                                self.attackers.pop()
+                            elif self.defenders:
+                                self.defenders.pop()
+
+                    else:  # simulation phase
+                        if event.key == pygame.K_r:
+                            # Back to placement
+                            if self.env:
+                                self.env.close()
+                                self.env = None
+                            self.placing = True
+                            self.model = None
+
+                        elif event.key == pygame.K_p:
+                            self.paused = not self.paused
+
+                if event.type == pygame.MOUSEBUTTONDOWN and self.placing:
+                    wx, wy = self.screen_to_world(event.pos[0], event.pos[1])
+                    if event.button == 1:  # Left click = defender
+                        self.defenders.append([wx, wy, self.place_altitude])
+                    elif event.button == 3:  # Right click = attacker
+                        self.attackers.append([wx, wy, self.place_altitude])
+                    elif event.button == 2:  # Middle click = target
+                        self.target_pos = [wx, wy, self.place_altitude]
+
+                if event.type == pygame.MOUSEWHEEL:
+                    alt_step = 5.0 if self.realistic else 0.5
+                    alt_max = 120.0 if self.realistic else 10.0
+                    alt_min = 2.0 if self.realistic else 0.5
+                    self.place_altitude = max(alt_min, min(alt_max,
+                        self.place_altitude + event.y * alt_step))
+
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_LEFT]: self.cam_azimuth -= 2
+            if keys[pygame.K_RIGHT]: self.cam_azimuth += 2
+            if keys[pygame.K_UP]: self.cam_elevation = min(89, self.cam_elevation + 2)
+            if keys[pygame.K_DOWN]: self.cam_elevation = max(5, self.cam_elevation - 2)
+            if keys[pygame.K_EQUALS] or keys[pygame.K_PLUS]: self.cam_zoom *= 1.02
+            if keys[pygame.K_MINUS]: self.cam_zoom *= 0.98
+
+            # --- DRAW ---
+            screen.fill(BLACK)
+            self.draw_grid(screen)
+            self.draw_arena_bounds(screen)
+
+            if self.placing:
+                # Draw placed drones
+                for i, d in enumerate(self.defenders):
+                    color = self.def_colors[i % len(self.def_colors)]
+                    self.draw_drone_marker(screen, d, color, f"D{i+1}")
+                for i, a in enumerate(self.attackers):
+                    color = self.att_colors[i % len(self.att_colors)]
+                    self.draw_drone_marker(screen, a, color, f"A{i+1}")
+                self.draw_target_marker(screen, self.target_pos)
+
+                # Draw cursor preview
+                cx, cy = self.world_to_screen((cursor_world[0], cursor_world[1], self.place_altitude))
+                pygame.draw.circle(screen, (100, 100, 100), (cx, cy), 8, 1)
+
+                # HUD — placement instructions
+                hud = [
+                    ("SPAWN MODE — Place your drones!", ORANGE),
+                    ("", WHITE),
+                    (f"  Defenders: {len(self.defenders)}  (Left-click to place)", BLUE),
+                    (f"  Attackers: {len(self.attackers)}  (Right-click to place)", RED),
+                    (f"  Altitude:  {self.place_altitude:.1f}m  (Scroll wheel)", WHITE),
+                    ("", WHITE),
+                    ("  Middle-click = move target", GREEN),
+                    ("  U = undo last    C = clear all", WHITE),
+                    ("  Arrows = rotate camera    +/- = zoom", GRAY),
+                    ("", WHITE),
+                ]
+                if self.defenders or self.attackers:
+                    hud.append(("  >>> Press ENTER to start simulation <<<", ORANGE))
+                else:
+                    hud.append(("  Place at least 1 drone to start", GRAY))
+
+                y = 10
+                for text, color in hud:
+                    surf = font.render(text, True, color)
+                    screen.blit(surf, (10, y))
+                    y += 18
+
+            else:
+                # Simulation phase
+                if not self.paused and self.env is not None:
+                    if self.model is not None:
+                        actions, _ = self.model.predict(obs, deterministic=True)
+                    else:
+                        n = len(self.defenders) or 1
+                        actions = np.zeros((n, 3), dtype=np.float32)
+
+                    obs, rewards, dones, infos = self.env.step(actions)
+                    self.step_count += 1
+
+                    for info in infos:
+                        if info.get("intercepted"):
+                            self.intercepts += 1
+                        if info.get("target_reached"):
+                            self.target_hits += 1
+
+                # Draw sim
+                if self.env is not None:
+                    wp.synchronize()
+                    body_q = self.env.state_0.body_q.numpy()
+                    n_def = self.env.N
+                    n_att = self.env.M
+
+                    # Target
+                    t = self.env.target_pos_wp
+                    tpos = [float(t[0]), float(t[1]), float(t[2])]
+                    self.draw_target_marker(screen, tpos)
+
+                    # Defenders
+                    for d in range(n_def):
+                        pos = body_q[d][:3].tolist()
+                        elim = self.env.eliminated_defenders[0, d]
+                        if not elim:
+                            color = self.def_colors[d % len(self.def_colors)]
+                            self.draw_drone_marker(screen, pos, color, f"D{d+1}")
+                        else:
+                            sx, sy = self.world_to_screen(pos)
+                            pygame.draw.line(screen, (80, 80, 80), (sx-5, sy-5), (sx+5, sy+5), 2)
+                            pygame.draw.line(screen, (80, 80, 80), (sx-5, sy+5), (sx+5, sy-5), 2)
+
+                    # Attackers
+                    for a in range(n_att):
+                        pos = body_q[n_def + a][:3].tolist()
+                        elim = self.env.eliminated_attackers[0, a]
+                        if not elim:
+                            color = self.att_colors[a % len(self.att_colors)]
+                            self.draw_drone_marker(screen, pos, color, f"A{a+1}")
+                        else:
+                            sx, sy = self.world_to_screen(pos)
+                            pygame.draw.line(screen, (80, 80, 80), (sx-5, sy-5), (sx+5, sy+5), 2)
+                            pygame.draw.line(screen, (80, 80, 80), (sx-5, sy+5), (sx+5, sy-5), 2)
+
+                    active_def = n_def - np.sum(self.env.eliminated_defenders[0])
+                    active_att = n_att - np.sum(self.env.eliminated_attackers[0])
+
+                    hud = [
+                        (f"Step: {self.step_count}  Defenders: {active_def}/{n_def}  Attackers: {active_att}/{n_att}", WHITE),
+                        (f"Intercepts: {self.intercepts}  Target Hits: {self.target_hits}  {'PAUSED' if self.paused else ''}", ORANGE if self.paused else WHITE),
+                        (f"R=reset  P=pause  Arrows=camera  +/-=zoom  Q=quit", GRAY),
+                    ]
+                    y = 10
+                    for text, color in hud:
+                        surf = font.render(text, True, color)
+                        screen.blit(surf, (10, y))
+                        y += 18
+
+            pygame.display.flip()
+            clock.tick(48)
+
+        if self.env is not None:
+            self.env.close()
+        pygame.quit()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Interactive Drone Game")
     parser.add_argument("--mode", type=str, default="free",
-                        choices=["free", "defend", "attack", "watch", "swarm"])
+                        choices=["free", "defend", "attack", "watch", "swarm", "spawn"])
     parser.add_argument("--defender", type=str, default=None,
                         help="Path to defender model (watch/attack/swarm modes)")
     parser.add_argument("--attacker", type=str, default=None,
@@ -664,18 +1125,44 @@ def main():
     parser.add_argument("--strategy", type=str, default="direct",
                         choices=["direct", "flanking", "mixed"],
                         help="Scripted attacker strategy (swarm mode)")
+    parser.add_argument("--obstacles", type=int, default=3, help="Number of obstacles")
+    parser.add_argument("--k-opponents", type=int, default=3)
+    parser.add_argument("--k-teammates", type=int, default=2)
+    parser.add_argument("--kamikaze", action="store_true", default=True)
+    parser.add_argument("--no-kamikaze", dest="kamikaze", action="store_false")
+    parser.add_argument("--realistic", action="store_true", default=False,
+                        help="Use 300m x 300m realistic field scale (15-18 m/s drones)")
     args = parser.parse_args()
+
+    # If realistic mode, default arena to 150m (300m total)
+    if args.realistic and args.arena == 8.0:
+        args.arena = 150.0
 
     wp.init()
 
-    if args.mode == "swarm":
+    if args.mode == "spawn":
+        game = SpawnGame(
+            defender_path=args.defender,
+            arena_size=args.arena,
+            obstacles=args.obstacles,
+            k_opponents=args.k_opponents,
+            k_teammates=args.k_teammates,
+            kamikaze=args.kamikaze,
+            realistic=args.realistic,
+        )
+    elif args.mode == "swarm":
         game = SwarmGame(
             defender_path=args.defender,
             num_defenders=args.defenders,
             num_attackers=args.attackers,
             arena_size=args.arena,
+            obstacles=args.obstacles,
             attacker_model_path=args.attacker_model,
             attacker_strategy=args.strategy,
+            k_opponents=args.k_opponents,
+            k_teammates=args.k_teammates,
+            kamikaze=args.kamikaze,
+            realistic=args.realistic,
         )
     else:
         game = DroneGame(

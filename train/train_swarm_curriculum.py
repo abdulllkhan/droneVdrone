@@ -90,6 +90,10 @@ STAGES = [
 
 def train_stage(args, stage, stage_idx, resume_path=None):
     train_cfg = TrainConfig()
+    if args.batch_size > 0:
+        train_cfg.batch_size = args.batch_size
+    if args.buffer_size > 0:
+        train_cfg.buffer_size = args.buffer_size
 
     env_kwargs = dict(
         mode="intercept",
@@ -106,7 +110,22 @@ def train_stage(args, stage, stage_idx, resume_path=None):
             env_kwargs[k] = v
 
     env_cfg = EnvConfig(**env_kwargs)
+    if args.realistic:
+        env_cfg.apply_realistic_scale()
+        # Restore user-specified overrides after scale preset
+        env_cfg.num_defenders = args.defenders
+        env_cfg.num_attackers = args.attackers
+        env_cfg.num_obstacles = args.obstacles
+        env_cfg.k_opponents = args.k_opponents
+        env_cfg.k_teammates = args.k_teammates
+        env_cfg.kamikaze = args.kamikaze
+        # Re-apply stage-specific settings
+        for k, v in stage.items():
+            if k not in ("name", "desc"):
+                setattr(env_cfg, k, v)
     tag = f"swarm_{args.defenders}v{args.attackers}_{stage['name']}"
+    if args.realistic:
+        tag += "_300m"
 
     print(f"\n{'='*60}")
     print(f"  Stage {stage_idx+1}/{len(STAGES)}: {stage['desc']}")
@@ -114,6 +133,7 @@ def train_stage(args, stage, stage_idx, resume_path=None):
     if resume_path:
         print(f"  Resume: {resume_path}")
     print(f"  Timesteps: {args.timesteps_per_stage:,}")
+    print(f"  Worlds: {args.num_worlds} | Batch: {train_cfg.batch_size} | Buffer: {train_cfg.buffer_size}")
     print(f"{'='*60}\n")
 
     env = NewtonSwarmEnv(num_worlds=args.num_worlds, config=env_cfg)
@@ -127,10 +147,29 @@ def train_stage(args, stage, stage_idx, resume_path=None):
         k_teammates=args.k_teammates,
         kamikaze=args.kamikaze,
     )
+    if args.realistic:
+        eval_cfg.apply_realistic_scale()
+        eval_cfg.num_defenders = args.defenders
+        eval_cfg.num_attackers = args.attackers
+        eval_cfg.num_obstacles = args.obstacles
     eval_env = NewtonSwarmEnv(num_worlds=max(4, args.num_worlds // 16), config=eval_cfg)
 
+    # Maximize GPU utilization on DGX Spark (1536 CUDA cores, 128GB unified memory):
+    # SB3's replay buffer is CPU-bound, so we push GPU work via:
+    # 1) Large gradient_steps — many SGD updates per env.step() (GPU backprop)
+    # 2) Large batch_size — saturate GPU cores per gradient step
+    # 3) Collect multiple env steps before training (train_freq)
+    gradient_steps = 64  # 64 gradient updates per training round → GPU stays busy
+    train_freq = 4       # Collect 4 env steps (4*num_worlds transitions) between training rounds
+
+    from stable_baselines3.common.type_aliases import TrainFreq, TrainFrequencyUnit
+
+    import sys
+    print(f"  Creating SAC model (buffer={train_cfg.buffer_size * args.defenders:,})...", flush=True)
     if resume_path:
         model = SAC.load(resume_path, env=env, device="cuda")
+        model.gradient_steps = gradient_steps
+        model.train_freq = TrainFreq(train_freq, TrainFrequencyUnit.STEP)
     else:
         model = SAC(
             policy="MlpPolicy",
@@ -142,12 +181,15 @@ def train_stage(args, stage, stage_idx, resume_path=None):
             gamma=train_cfg.gamma,
             tau=train_cfg.tau,
             ent_coef=train_cfg.ent_coef,
+            gradient_steps=gradient_steps,
+            train_freq=(train_freq, "step"),
             policy_kwargs={"net_arch": train_cfg.net_arch},
             tensorboard_log=train_cfg.tensorboard_log,
             verbose=1,
             seed=train_cfg.seed,
             device="cuda",
         )
+    print(f"  SAC model ready. Starting training...", flush=True)
 
     checkpoint_cb = CheckpointCallback(
         save_freq=train_cfg.checkpoint_freq,
@@ -196,6 +238,10 @@ def main():
     parser.add_argument("--k-teammates", type=int, default=2, help="K nearest teammates to observe")
     parser.add_argument("--kamikaze", action="store_true", default=True, help="Defender destroyed on interception")
     parser.add_argument("--no-kamikaze", dest="kamikaze", action="store_false", help="Disable kamikaze")
+    parser.add_argument("--batch-size", type=int, default=0, help="Override batch size (0 = use config default)")
+    parser.add_argument("--buffer-size", type=int, default=0, help="Override buffer size (0 = use config default)")
+    parser.add_argument("--realistic", action="store_true", default=False,
+                        help="Use 300m x 300m realistic field scale (15-18 m/s drones)")
     args = parser.parse_args()
 
     wp.init()

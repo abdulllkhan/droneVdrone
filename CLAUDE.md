@@ -43,3 +43,9 @@ python -m eval.evaluate --model models/defender_sac.zip --gui
 - **Why PyBullet over Omniverse**: Faster iteration for algorithm development. Omniverse is planned for later scaling.
 - **Why SAC over PPO**: Better sample efficiency for continuous 3D control. PPO is the backup.
 - **Why dense reward**: Sparse rewards (only on collision) make learning too slow. Dense distance-based reward provides gradient signal throughout the episode.
+
+## GPU Training Requirements
+- **ALWAYS train on CUDA GPU**, never CPU. The DGX Spark GB10 (1536 CUDA cores, 128GB unified memory) was purchased specifically for training.
+- Use high `num_worlds` (1024+), large `batch_size` (4096), and `gradient_steps=64` to maximize GPU utilization.
+- Use `device="cuda"` in all SAC model creation and loading.
+- Monitor GPU utilization with `nvidia-smi dmon -s u` during training — target 50%+ SM utilization.
