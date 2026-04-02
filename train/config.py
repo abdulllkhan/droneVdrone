@@ -139,6 +139,10 @@ class EnvConfig:
         self.obstacle_min_spacing = 15.0
         self.obstacle_danger_radius = 5.0
         self.obstacle_collision_radius = 3.0
+        # Phase-specific scales
+        self.arrival_dist = 2.0
+        self.arrival_bonus = 500.0
+        self.moving_target_speed = 5.0
         return self
 
 
