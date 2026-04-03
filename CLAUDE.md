@@ -51,6 +51,13 @@ python -m eval.evaluate --model models/defender_sac.zip --gui
 - Never save models to temporary or ad-hoc directories — they will be invisible to the launcher and easy to lose.
 - After training completes, remind the user they can view the new model in the launcher.
 
+## Training Monitoring
+- **Proactively check training progress** — if a training run is active (check with `pgrep -f train`), regularly monitor it without waiting for the user to ask. Check logs, timestep counts, FPS, stage progress, and GPU utilization.
+- Check logs at: `logs/adaptive_training.log`, `logs/train_300m_fixed.log`, `logs/train_300m_300M.log`
+- Key commands: `tail -20 <logfile> | grep -E "total_timesteps|fps|Stage|PASSED|DEGENERATE|intercept"` and `nvidia-smi dmon -s u -c 3`
+- If training crashes or stalls (no timestep progress for >5 min), diagnose and restart immediately.
+- Report progress to the user proactively: current stage, steps completed, FPS, ETA, and any issues.
+
 ## GPU Training Requirements
 - **ALWAYS train on CUDA GPU**, never CPU. The DGX Spark GB10 (1536 CUDA cores, 128GB unified memory) was purchased specifically for training.
 - Use high `num_worlds` (1024+), large `batch_size` (4096), and `gradient_steps=64` to maximize GPU utilization.
