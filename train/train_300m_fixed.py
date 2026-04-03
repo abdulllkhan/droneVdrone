@@ -88,7 +88,8 @@ def evaluate_model(model_path, num_episodes=50, realistic=True,
                     break
 
         # Every 10 steps, sample defender spread and attacker movement
-        if env.step_count % 10 == 0:
+        step_counts = env.step_count_buf.numpy()
+        if step_counts[0] % 10 == 0:
             try:
                 body_q = env.state_0.body_q.numpy()
                 for w in range(min(env.num_worlds, 4)):
