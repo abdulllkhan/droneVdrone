@@ -131,7 +131,7 @@ class EnvConfig:
         self.force_kd = 10.0
         self.max_force = 80.0            # Much stronger forces for high-speed maneuvering
         # Larger leash for bigger arena
-        self.defender_leash_radius = 80.0
+        self.defender_leash_radius = 200.0
         # Obstacles scale
         self.obstacle_radius = 2.0
         self.obstacle_height = 30.0
@@ -139,6 +139,10 @@ class EnvConfig:
         self.obstacle_min_spacing = 15.0
         self.obstacle_danger_radius = 5.0
         self.obstacle_collision_radius = 3.0
+        # Phase-specific scales
+        self.arrival_dist = 2.0
+        self.arrival_bonus = 500.0
+        self.moving_target_speed = 5.0
         return self
 
 

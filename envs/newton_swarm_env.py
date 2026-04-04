@@ -255,7 +255,7 @@ class NewtonSwarmEnv(VecEnv):
 
         self.defender_speed_limit = self.cfg.defender_speed_limit
         self.attacker_speed_limit = self.cfg.attacker_speed_limit
-        self.attacker_speed = self.cfg.attacker_speed_scale * 0.8
+        self.attacker_speed = self.cfg.attacker_speed_scale * self.cfg.attacker_speed_limit
         # Per-attacker speed array (randomized each episode if variance > 0)
         self.per_attacker_speed = np.full((num_worlds, self.M), self.attacker_speed, dtype=np.float32)
         # Per-drone mass array (randomized each episode if variance > 0)
@@ -706,9 +706,9 @@ class NewtonSwarmEnv(VecEnv):
         body_q = self.state_0.body_q.numpy()
         body_qd = self.state_0.body_qd.numpy()
 
-        pos_scale = 0.25
-        vel_scale = 0.2
-        rel_scale = 1.0 / 6.0
+        pos_scale = 1.0 / max(self.cfg.arena_bounds, 1.0)
+        vel_scale = 1.0 / max(self.cfg.defender_speed_limit * 2, 1.0)
+        rel_scale = 1.0 / max(self.cfg.arena_bounds * 0.5, 1.0)
 
         t = self.target_pos_wp
         target = np.array([float(t[0]), float(t[1]), float(t[2])], dtype=np.float32)
@@ -788,9 +788,9 @@ class NewtonSwarmEnv(VecEnv):
         body_q = self.state_0.body_q.numpy()
         body_qd = self.state_0.body_qd.numpy()
 
-        pos_scale = 0.25
-        vel_scale = 0.2
-        rel_scale = 1.0 / 6.0
+        pos_scale = 1.0 / max(self.cfg.arena_bounds, 1.0)
+        vel_scale = 1.0 / max(self.cfg.defender_speed_limit * 2, 1.0)
+        rel_scale = 1.0 / max(self.cfg.arena_bounds * 0.5, 1.0)
 
         t = self.target_pos_wp
         target = np.array([float(t[0]), float(t[1]), float(t[2])], dtype=np.float32)
@@ -1037,14 +1037,17 @@ class NewtonSwarmEnv(VecEnv):
                         continue
 
                     if any_intercept:
-                        reward += 100.0
+                        reward += 150.0
                         # Efficiency bonus: extra reward if this defender intercepted as closest
                         if d in efficient_intercept_defenders:
                             reward += self.cfg.intercept_efficiency_bonus
+                        # Team bonus: all active teammates share credit for enabling interception
+                        if d not in newly_eliminated_defenders:
+                            reward += 30.0
                     if any_target_reached:
-                        reward -= 200.0
+                        reward -= 300.0
                     if all_attackers_eliminated:
-                        reward += 200.0
+                        reward += 500.0
                         world_dones[w] = 1
                     if any_target_reached:
                         world_dones[w] = 1
@@ -1053,6 +1056,7 @@ class NewtonSwarmEnv(VecEnv):
                         reward -= 100.0
                         world_dones[w] = 1
 
+                    # === PURSUIT (dominant signal) ===
                     # Dense reward: approach nearest active attacker
                     min_dist = float('inf')
                     # Track most-threatening attacker (closest to target)
@@ -1070,30 +1074,36 @@ class NewtonSwarmEnv(VecEnv):
                     if min_dist < float('inf'):
                         prev = self.prev_dist_buf[w, d]
                         if prev > 0:
-                            reward += (prev - min_dist) * 50.0
+                            closing = prev - min_dist
+                            reward += closing * 200.0  # 4x stronger — pursuit is king
+                            # Inaction penalty: punish not closing distance
+                            if closing <= 0:
+                                reward -= 1.0
                         self.prev_dist_buf[w, d] = min_dist
-                        reward += 1.0 / (min_dist + 0.1) - 1.0 / (4.0 + 0.1)
 
-                    # Priority targeting bonus: extra reward for approaching the
-                    # attacker closest to target (most dangerous)
-                    if dist_to_priority < float('inf') and dist_to_priority < 2.0:
-                        reward += (2.0 - dist_to_priority) * 0.5
+                    # Priority targeting: big reward for chasing most dangerous attacker
+                    priority_range = self.cfg.arena_bounds * 0.3
+                    if dist_to_priority < float('inf') and dist_to_priority < priority_range:
+                        threat_level = 1.0 - (min_att_to_target / max(self.cfg.arena_bounds, 1.0))
+                        reward += 3.0 * max(threat_level, 0.0) * (priority_range - dist_to_priority) / priority_range
 
-                    # Coordination: reward spread between active defenders
+                    # === ANTI-CLUSTERING ===
+                    # Defender separation: penalize being too close to other defenders
+                    min_sep = self.cfg.intercept_dist * 2.5  # 5m in 300m arena
                     if len(active_defenders) > 1 and not self.eliminated_defenders[w, d]:
                         for d2 in active_defenders:
                             if d2 != d:
                                 dd = np.linalg.norm(def_positions[d] - def_positions[d2])
-                                reward += self.cfg.coordination_bonus * min(dd, 2.0)
+                                if dd < min_sep:
+                                    reward -= (min_sep - dd) / min_sep * 3.0
 
-                    # Target assignment diversity: penalize when this defender
-                    # shares a target with another defender while attackers go unguarded
+                    # Target assignment diversity: strong penalty for doubling up
                     if len(active_defenders) > 1 and n_active >= 2:
                         my_target = nearest_attacker[d]
                         if my_target >= 0 and assignment_counts.get(my_target, 0) > 1:
-                            reward -= 0.3
+                            reward -= 2.0
 
-                    # Defender leash: penalize straying too far from target
+                    # Defender leash: wide — let defenders chase freely
                     if not self.eliminated_defenders[w, d]:
                         def_to_target = np.linalg.norm(def_positions[d] - target)
                         if def_to_target > self.cfg.defender_leash_radius:
@@ -1103,24 +1113,8 @@ class NewtonSwarmEnv(VecEnv):
                         else:
                             self.outside_zone_steps[w, d] = max(0.0, self.outside_zone_steps[w, d] - 0.5)
 
-                    # Angular coverage: reward defenders for spreading angles around target
-                    if len(active_defenders) > 1 and n_active > 0 and not self.eliminated_defenders[w, d]:
-                        dx = def_positions[d][0] - target[0]
-                        dy = def_positions[d][1] - target[1]
-                        my_angle = np.arctan2(dy, dx)
-                        for d2 in active_defenders:
-                            if d2 != d:
-                                dx2 = def_positions[d2][0] - target[0]
-                                dy2 = def_positions[d2][1] - target[1]
-                                other_angle = np.arctan2(dy2, dx2)
-                                angle_diff = abs(my_angle - other_angle)
-                                if angle_diff > np.pi:
-                                    angle_diff = 2 * np.pi - angle_diff
-                                ideal_sep = np.pi / max(1, len(active_defenders) - 1)
-                                if angle_diff > ideal_sep * 0.5:
-                                    reward += self.cfg.angular_coverage_bonus * min(angle_diff / np.pi, 1.0)
-
-                    reward -= 0.05
+                    # Urgency penalty — finish fast
+                    reward -= 0.2
 
                     # Obstacle penalties
                     if obs_pos_np is not None and not self.eliminated_defenders[w, d]:
@@ -1150,9 +1144,9 @@ class NewtonSwarmEnv(VecEnv):
         body_q = self.state_0.body_q.numpy()
         body_qd = self.state_0.body_qd.numpy()
 
-        pos_scale = 0.25
-        vel_scale = 0.2
-        rel_scale = 1.0 / 6.0
+        pos_scale = 1.0 / max(self.cfg.arena_bounds, 1.0)
+        vel_scale = 1.0 / max(self.cfg.defender_speed_limit * 2, 1.0)
+        rel_scale = 1.0 / max(self.cfg.arena_bounds * 0.5, 1.0)
 
         t = self.target_pos_wp
         target = np.array([float(t[0]), float(t[1]), float(t[2])], dtype=np.float32)

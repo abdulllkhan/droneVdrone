@@ -44,6 +44,20 @@ python -m eval.evaluate --model models/defender_sac.zip --gui
 - **Why SAC over PPO**: Better sample efficiency for continuous 3D control. PPO is the backup.
 - **Why dense reward**: Sparse rewards (only on collision) make learning too slow. Dense distance-based reward provides gradient signal throughout the episode.
 
+## Model Management
+- **All trained models MUST be saved to `models/`** — every checkpoint, final, and best model goes here as a `.zip` file.
+- The **interactive model launcher** (`python -m eval.launcher`) auto-scans `models/` and displays all trained models grouped by category. Use it to browse and watch any model in action.
+- When writing training scripts, always save outputs to `models/` with descriptive names (e.g., `swarm_15v10_stage3_dynamic_300m_final.zip`).
+- Never save models to temporary or ad-hoc directories — they will be invisible to the launcher and easy to lose.
+- After training completes, remind the user they can view the new model in the launcher.
+
+## Training Monitoring
+- **Proactively check training progress** — if a training run is active (check with `pgrep -f train`), regularly monitor it without waiting for the user to ask. Check logs, timestep counts, FPS, stage progress, and GPU utilization.
+- Check logs at: `logs/adaptive_training.log`, `logs/train_300m_fixed.log`, `logs/train_300m_300M.log`
+- Key commands: `tail -20 <logfile> | grep -E "total_timesteps|fps|Stage|PASSED|DEGENERATE|intercept"` and `nvidia-smi dmon -s u -c 3`
+- If training crashes or stalls (no timestep progress for >5 min), diagnose and restart immediately.
+- Report progress to the user proactively: current stage, steps completed, FPS, ETA, and any issues.
+
 ## GPU Training Requirements
 - **ALWAYS train on CUDA GPU**, never CPU. The DGX Spark GB10 (1536 CUDA cores, 128GB unified memory) was purchased specifically for training.
 - Use high `num_worlds` (1024+), large `batch_size` (4096), and `gradient_steps=64` to maximize GPU utilization.
