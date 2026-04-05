@@ -1036,30 +1036,27 @@ class NewtonSwarmEnv(VecEnv):
                         }
                         continue
 
+                    # === EVENT REWARDS (dominant signals) ===
                     if any_intercept:
-                        reward += 150.0
-                        # Efficiency bonus: extra reward if this defender intercepted as closest
+                        reward += 15000.0
                         if d in efficient_intercept_defenders:
                             reward += self.cfg.intercept_efficiency_bonus
-                        # Team bonus: all active teammates share credit for enabling interception
+                        # Team bonus: teammates share credit
                         if d not in newly_eliminated_defenders:
-                            reward += 30.0
+                            reward += 500.0
                     if any_target_reached:
-                        reward -= 300.0
+                        reward -= 10000.0
                     if all_attackers_eliminated:
-                        reward += 500.0
+                        reward += 20000.0
                         world_dones[w] = 1
                     if any_target_reached:
                         world_dones[w] = 1
-                    # All defenders dead but attackers remain — mission failure
                     if all_defenders_eliminated and not all_attackers_eliminated:
-                        reward -= 100.0
+                        reward -= 10000.0
                         world_dones[w] = 1
 
-                    # === PURSUIT (dominant signal) ===
-                    # Dense reward: approach nearest active attacker
+                    # === PURSUIT (guidance signal, not dominant) ===
                     min_dist = float('inf')
-                    # Track most-threatening attacker (closest to target)
                     min_att_to_target = float('inf')
                     dist_to_priority = float('inf')
                     for a in active_attackers:
@@ -1075,35 +1072,33 @@ class NewtonSwarmEnv(VecEnv):
                         prev = self.prev_dist_buf[w, d]
                         if prev > 0:
                             closing = prev - min_dist
-                            reward += closing * 200.0  # 4x stronger — pursuit is king
-                            # Inaction penalty: punish not closing distance
+                            reward += closing * 80.0
                             if closing <= 0:
-                                reward -= 1.0
+                                reward -= 5.0
                         self.prev_dist_buf[w, d] = min_dist
 
-                    # Priority targeting: big reward for chasing most dangerous attacker
+                    # Priority targeting: reward chasing most dangerous attacker
                     priority_range = self.cfg.arena_bounds * 0.3
                     if dist_to_priority < float('inf') and dist_to_priority < priority_range:
                         threat_level = 1.0 - (min_att_to_target / max(self.cfg.arena_bounds, 1.0))
-                        reward += 3.0 * max(threat_level, 0.0) * (priority_range - dist_to_priority) / priority_range
+                        reward += 2.0 * max(threat_level, 0.0) * (priority_range - dist_to_priority) / priority_range
 
                     # === ANTI-CLUSTERING ===
-                    # Defender separation: penalize being too close to other defenders
-                    min_sep = self.cfg.intercept_dist * 2.5  # 5m in 300m arena
+                    min_sep = self.cfg.intercept_dist * 2.5
                     if len(active_defenders) > 1 and not self.eliminated_defenders[w, d]:
                         for d2 in active_defenders:
                             if d2 != d:
                                 dd = np.linalg.norm(def_positions[d] - def_positions[d2])
                                 if dd < min_sep:
-                                    reward -= (min_sep - dd) / min_sep * 3.0
+                                    reward -= (min_sep - dd) / min_sep * 5.0
 
-                    # Target assignment diversity: strong penalty for doubling up
+                    # Target assignment: strong penalty for doubling up
                     if len(active_defenders) > 1 and n_active >= 2:
                         my_target = nearest_attacker[d]
                         if my_target >= 0 and assignment_counts.get(my_target, 0) > 1:
-                            reward -= 2.0
+                            reward -= 5.0
 
-                    # Defender leash: wide — let defenders chase freely
+                    # Defender leash
                     if not self.eliminated_defenders[w, d]:
                         def_to_target = np.linalg.norm(def_positions[d] - target)
                         if def_to_target > self.cfg.defender_leash_radius:
@@ -1113,8 +1108,8 @@ class NewtonSwarmEnv(VecEnv):
                         else:
                             self.outside_zone_steps[w, d] = max(0.0, self.outside_zone_steps[w, d] - 0.5)
 
-                    # Urgency penalty — finish fast
-                    reward -= 0.2
+                    # Time penalty
+                    reward -= 0.1
 
                     # Obstacle penalties
                     if obs_pos_np is not None and not self.eliminated_defenders[w, d]:
