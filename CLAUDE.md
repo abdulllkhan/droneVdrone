@@ -53,10 +53,17 @@ python -m eval.evaluate --model models/defender_sac.zip --gui
 
 ## Training Monitoring
 - **Proactively check training progress** — if a training run is active (check with `pgrep -f train`), regularly monitor it without waiting for the user to ask. Check logs, timestep counts, FPS, stage progress, and GPU utilization.
-- Check logs at: `logs/adaptive_training.log`, `logs/train_300m_fixed.log`, `logs/train_300m_300M.log`
+- **At the start of every new training run, immediately set up a recurring 5-minute monitoring loop** using the `/loop` skill: `/loop 5m Check drone training status...`. This catches crashes and stalls automatically without waiting for the user to ask.
+- Check logs at: `logs/adaptive_training.log`, `logs/train_300m_fixed.log`, `logs/train_300m_300M.log`, `logs/train_improved_rewards.log`
 - Key commands: `tail -20 <logfile> | grep -E "total_timesteps|fps|Stage|PASSED|DEGENERATE|intercept"` and `nvidia-smi dmon -s u -c 3`
-- If training crashes or stalls (no timestep progress for >5 min), diagnose and restart immediately.
+- If training crashes or stalls (no timestep progress for >5 min), diagnose and restart immediately without waiting for the user.
 - Report progress to the user proactively: current stage, steps completed, FPS, ETA, and any issues.
+- **Crash recovery**: check the log tail for `Traceback`, `Error`, `OOM`, `CUDA out of memory` — if found, diagnose root cause and restart with appropriate flags (e.g. reduce `--num-worlds` if OOM).
+
+## Git Workflow
+- **Always check the current branch** before making commits: `git branch --show-current`
+- Create feature branches from main using the `DD-<number>` naming convention (e.g., `DD-15`, `DD-16`)
+- Each PR corresponds to one feature branch
 
 ## GPU Training Requirements
 - **ALWAYS train on CUDA GPU**, never CPU. The DGX Spark GB10 (1536 CUDA cores, 128GB unified memory) was purchased specifically for training.

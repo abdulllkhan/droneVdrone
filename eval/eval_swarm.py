@@ -2,8 +2,14 @@
 Swarm evaluation — Run NvM episodes and generate trajectory plots.
 
 Usage:
-    # Defender vs scripted attackers
+    # Defender vs scripted attackers (small arena)
     python -m eval.eval_swarm --model models/swarm_2v2_final.zip --defenders 2 --attackers 2
+
+    # Ukraine 7v5 scenario (1km arena, hills, detection)
+    python3 -m eval.eval_swarm --model models/ukraine_7v5_stage1_baseline_final.zip --ukraine --gif
+
+    # Ukraine with flanking attackers
+    python3 -m eval.eval_swarm --model models/ukraine_7v5_stage4_evasion_final.zip --ukraine --strategy flanking --gif
 
     # Defender vs RL attacker model
     python -m eval.eval_swarm --model models/swarm_2v2_final.zip --defenders 2 --attackers 2 --attacker-model models/swarm_adv_attacker_2v2_round1.zip
@@ -17,7 +23,7 @@ import os
 
 import numpy as np
 import warp as wp
-from stable_baselines3 import SAC
+from stable_baselines3 import SAC, PPO
 
 import matplotlib
 matplotlib.use("Agg")
@@ -113,8 +119,9 @@ def plot_episode_grid(episodes, save_path, title="Swarm Episodes"):
         if ep["obstacle_pos"] is not None:
             for o in range(len(ep["obstacle_pos"])):
                 p = ep["obstacle_pos"][o]
-                ax.plot([p[0], p[0]], [p[1], p[1]], [0, 4],
-                        color="gray", alpha=0.3, linewidth=3)
+                hill_h = p[2] * 2  # obstacle z = half-height, total = 2x
+                ax.plot([p[0], p[0]], [p[1], p[1]], [0, hill_h],
+                        color="gray", alpha=0.4, linewidth=5)
 
         ax.set_title(f"Ep {idx+1}: {ep['outcome']} ({ep['steps']} steps)", fontsize=9)
         ax.set_xlabel("X")
@@ -178,12 +185,13 @@ def make_gif(episode, save_path, fps=15):
         # Target
         ax.scatter(*episode["target_pos"], color="#4CAF50", marker="D", s=150)
 
-        # Obstacles
+        # Obstacles (hills)
         if episode["obstacle_pos"] is not None:
             for o in range(len(episode["obstacle_pos"])):
                 p = episode["obstacle_pos"][o]
-                ax.plot([p[0], p[0]], [p[1], p[1]], [0, 4],
-                        color="gray", alpha=0.3, linewidth=4)
+                hill_h = p[2] * 2  # obstacle z = half-height
+                ax.plot([p[0], p[0]], [p[1], p[1]], [0, hill_h],
+                        color="sienna", alpha=0.5, linewidth=6)
 
         # Defenders
         for d in range(episode["N"]):
@@ -223,6 +231,9 @@ def main():
     parser.add_argument("--output-dir", type=str, default="models")
     parser.add_argument("--k-opponents", type=int, default=3)
     parser.add_argument("--k-teammates", type=int, default=2)
+    parser.add_argument("--ukraine", action="store_true",
+                        help="Use Ukraine scenario scale (1km arena, Shahed vs FPV). "
+                             "Sets defenders=7, attackers=5, k_opponents=3, k_teammates=3 unless overridden.")
     args = parser.parse_args()
 
     wp.init()
@@ -230,14 +241,18 @@ def main():
     from envs.newton_swarm_env import NewtonSwarmEnv
     from train.config import EnvConfig
 
-    model = SAC.load(args.model)
+    model_path = args.model
+    try:
+        model = PPO.load(model_path)
+    except Exception:
+        model = SAC.load(model_path)
 
     # Auto-detect K config from model obs dim
     model_obs_dim = model.observation_space.shape[0]
     k_opp, k_tm = args.k_opponents, args.k_teammates
     from envs.newton_swarm_env import compute_obs_dim
     if compute_obs_dim(k_opp, k_tm) != model_obs_dim:
-        # Find K combo that matches obs_dim, preferring k_opp > k_tm (most common)
+        # Find K combo that matches obs_dim
         best = None
         for ko in range(1, 10):
             for kt in range(1, 10):
@@ -248,23 +263,42 @@ def main():
             k_opp, k_tm = best
             print(f"  Auto-detected K: k_opponents={k_opp}, k_teammates={k_tm} (obs_dim={model_obs_dim})")
 
-    env_kwargs = dict(
-        num_defenders=args.defenders,
-        num_attackers=args.attackers,
-        num_obstacles=args.obstacles,
-        attacker_strategy=args.strategy,
-        k_opponents=k_opp,
-        k_teammates=k_tm,
-        kamikaze=True,
-    )
-    if args.attacker_model:
-        env_kwargs["attacker_model_path"] = args.attacker_model
-    cfg = EnvConfig(**env_kwargs)
+    if args.ukraine:
+        # Ukraine scenario: apply realistic scale then override with args
+        cfg = EnvConfig()
+        cfg.apply_ukraine_scale()
+        cfg.num_defenders = args.defenders if args.defenders != 2 else 7
+        cfg.num_attackers = args.attackers if args.attackers != 2 else 5
+        cfg.k_opponents = k_opp
+        cfg.k_teammates = k_tm if k_tm != 2 else 3
+        cfg.kamikaze = True
+        cfg.attacker_strategy = args.strategy
+        cfg.num_obstacles = args.obstacles if args.obstacles != 3 else 5
+        if args.attacker_model:
+            cfg.attacker_model_path = args.attacker_model
+        print(f"  Ukraine scenario: {cfg.num_defenders}v{cfg.num_attackers}, "
+              f"arena={cfg.arena_bounds*2:.0f}m, sensor_range={cfg.sensor_range:.0f}m, "
+              f"hills={cfg.num_obstacles}")
+    else:
+        env_kwargs = dict(
+            num_defenders=args.defenders,
+            num_attackers=args.attackers,
+            num_obstacles=args.obstacles,
+            attacker_strategy=args.strategy,
+            k_opponents=k_opp,
+            k_teammates=k_tm,
+            kamikaze=True,
+        )
+        if args.attacker_model:
+            env_kwargs["attacker_model_path"] = args.attacker_model
+        cfg = EnvConfig(**env_kwargs)
+
     env = NewtonSwarmEnv(num_worlds=1, config=cfg)
 
+    os.makedirs(args.output_dir, exist_ok=True)
     att_label = "rl_att" if args.attacker_model else f"scripted_{args.strategy}"
-    tag = f"swarm_{args.defenders}v{args.attackers}_{att_label}"
-    print(f"\nRunning {args.episodes} episodes: {args.defenders}v{args.attackers}")
+    tag = f"swarm_{cfg.num_defenders}v{cfg.num_attackers}_{att_label}"
+    print(f"\nRunning {args.episodes} episodes: {cfg.num_defenders}v{cfg.num_attackers}")
 
     episodes = []
     for i in range(args.episodes):

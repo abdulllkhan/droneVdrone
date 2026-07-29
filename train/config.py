@@ -96,6 +96,9 @@ class EnvConfig:
     drone_mass_variance: float = 0.0  # Mass randomization ±fraction (0.1 = ±10% of drone_mass)
     attacker_speed_variance: float = 0.0  # Per-attacker speed randomization ±fraction
 
+    # Bootstrap shaping (Stage 1 warm-up — set to 0 for pure sparse stages)
+    approach_shaping_coeff: float = 0.0   # Per-meter closing toward nearest attacker (0=off; 0.1=stage1 bootstrap)
+
     # Phase-specific settings
     target_randomize_range: float = 2.0   # Random target radius (fly_to_target)
     target_alt_range: tuple = (0.5, 2.0)  # Random target altitude range
@@ -143,6 +146,68 @@ class EnvConfig:
         self.arrival_dist = 2.0
         self.arrival_bonus = 500.0
         self.moving_target_speed = 5.0
+        return self
+
+    def apply_ukraine_scale(self):
+        """Ukraine conflict scenario: Shahed-type attackers vs FPV interceptor defenders.
+
+        Attacker (Shahed-136 analog): ~50 m/s, low-altitude terrain-hugging loitering munition.
+        Defender (FPV interceptor analog): ~60 m/s, highly maneuverable kamikaze interceptor.
+
+        Arena: 1km x 1km open field with hill terrain.
+        Detection: defenders have radar-like detection range (300m); globally shared once detected.
+        """
+        # Arena
+        self.arena_bounds = 500.0           # ±500m = 1km × 1km field
+        self.altitude_max = 200.0           # Interceptors can climb high to intercept
+        self.altitude_min = 5.0             # Min altitude (terrain clearance)
+        # Intercept / target thresholds
+        self.intercept_dist = 3.0           # 3m collision radius (larger drones)
+        self.target_reached_dist = 5.0      # 5m target protection bubble
+        # Drone speeds
+        self.defender_speed_limit = 60.0    # FPV interceptor: ~216 km/h
+        self.attacker_speed_limit = 50.0    # Shahed: ~180 km/h
+        self.attacker_speed_scale = 1.0
+        # Episode length
+        self.episode_secs = 60.0            # 60s — enough to cover 1km at 50 m/s
+        # Spawn ranges (relative to target at origin)
+        self.attacker_dist_range = (200.0, 450.0)   # Shahed spawns far out
+        self.attacker_alt_range = (30.0, 90.0)       # Low-altitude terrain-hugging
+        self.defender_dist_range = (20.0, 120.0)     # Interceptors near target
+        self.defender_alt_range = (30.0, 150.0)
+        # Target
+        self.target_pos = (0.0, 0.0, 30.0)
+        self.target_alt_range_intercept = (20.0, 60.0)
+        self.target_alt_range = (10.0, 50.0)
+        self.target_randomize_range = 100.0
+        # Force model — powerful for high-speed maneuvering
+        self.drone_mass = 0.200
+        self.force_kp = 50.0
+        self.force_kd = 15.0
+        self.max_force = 150.0
+        # Hills terrain (wide, tall cylindrical hills)
+        self.num_obstacles = 5
+        self.obstacle_radius = 50.0          # Wide hill base (50m radius)
+        self.obstacle_height = 60.0          # Tall hill (60m half-height → 120m above ground)
+        self.obstacle_placement_range = 350.0
+        self.obstacle_min_spacing = 120.0    # Hills well-spaced
+        self.obstacle_danger_radius = 70.0   # Start penalizing at 70m from hill center
+        self.obstacle_collision_radius = 55.0
+        self.obstacle_proximity_penalty = 5.0
+        self.obstacle_collision_penalty = 100.0
+        # Detection range — shared radar (any defender detecting = all defenders know)
+        self.sensor_range = 300.0
+        # Wind (light — eastern European flatlands)
+        self.wind_enabled = True
+        self.wind_max_force = 0.5
+        self.wind_gust_prob = 0.01
+        self.wind_gust_force = 1.5
+        # Leash
+        self.defender_leash_radius = 800.0
+        # Phase-specific
+        self.arrival_dist = 3.0
+        self.arrival_bonus = 500.0
+        self.moving_target_speed = 10.0
         return self
 
 

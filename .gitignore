@@ -22,8 +22,8 @@ env/
 *.swp
 *.swo
 
-# Training artifacts
-models/*.zip
+# Training artifacts (recursive — checkpoints live in models/<run>_ckpt/ subdirs)
+models/**/*.zip
 models/*.png
 models/phase2_chase_speed*_final
 logs/

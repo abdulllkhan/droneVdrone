@@ -487,19 +487,29 @@ def compute_rewards_intercept_kernel(
     else:
         pd = prev_dist[world_id]
         if pd > 0.0:
-            reward += (pd - dist) * 50.0
+            # Urgency-scaled approach: bonus grows 3x as attacker nears target
+            frac = att_to_target / 3.0
+            if frac > 1.0:
+                frac = 1.0
+            urgency_scale = 1.0 + 2.0 * (1.0 - frac)
+            reward += (pd - dist) * 50.0 * urgency_scale
 
-        # Closing speed bonus
+        # Closing speed + velocity alignment (prevents spiral-orbit failure mode)
         if dist > 0.01:
             direction = to_attacker * (1.0 / dist)
             rel_vel = def_vel - att_vel
             closing_speed = wp.dot(rel_vel, direction)
             reward += closing_speed * 2.0
 
+            # Velocity alignment: reward defender for pointing directly at attacker
+            def_speed = wp.length(def_vel)
+            if def_speed > 0.01:
+                def_vel_hat = def_vel * (1.0 / def_speed)
+                alignment = wp.dot(def_vel_hat, direction)
+                reward += alignment * 2.0
+
         reward += 1.0 / (dist + 0.1) - 1.0 / (4.0 + 0.1)
         reward -= dist * dist * 0.3
-        urgency = 1.0 / (att_to_target + 0.5)
-        reward -= urgency * 0.5
         reward -= 0.05
 
         # Obstacle penalties for defender
@@ -807,6 +817,8 @@ class NewtonDroneEnv(VecEnv):
         self.wind_step_counter = 0
         # Domain randomization: observation noise
         self.obs_noise_std = self.cfg.obs_noise_std
+        # Action smoothness: track previous action to penalize oscillation
+        self._prev_actions = np.zeros((num_envs, self.ACT_DIM), dtype=np.float32)
         # Dynamic obstacles: velocity vectors
         self.obstacle_velocities = np.zeros((num_envs, MAX_OBSTACLES, 3), dtype=np.float32)
         self.obstacle_step_counter = 0
@@ -859,6 +871,7 @@ class NewtonDroneEnv(VecEnv):
         self.prev_dist_buf.zero_()
         self.step_count_buf.zero_()
         self.prev_vel_buf.zero_()
+        self._prev_actions[:] = 0.0
         self._randomize_attacker_assignments()
         self._randomize_wind()
         self._randomize_obstacle_velocities()
@@ -868,6 +881,7 @@ class NewtonDroneEnv(VecEnv):
 
     def step_async(self, actions):
         actions = np.asarray(actions, dtype=np.float32)
+        self._curr_actions = actions.copy()
         if self._action_delay > 0:
             # Push current action, pop oldest
             delayed = self._action_queue[0].copy()
@@ -985,6 +999,11 @@ class NewtonDroneEnv(VecEnv):
         terms = self.term_buf.numpy()
         truncs = self.dones_buf.numpy()
         dones = np.logical_or(terms > 0, truncs > 0)
+
+        # Action smoothness penalty: penalize oscillating commands (sim-to-real)
+        action_diff = np.linalg.norm(self._curr_actions - self._prev_actions, axis=1)
+        rewards -= 0.5 * action_diff
+        self._prev_actions = self._curr_actions.copy()
         info_a = self.info_buf_a.numpy()
         info_b = self.info_buf_b.numpy()
 
@@ -1037,6 +1056,7 @@ class NewtonDroneEnv(VecEnv):
                 done_indices = np.where(dones)[0]
                 n_models = len(self.attacker_models)
                 self._attacker_assignments[done_indices] = np.random.randint(0, n_models, size=len(done_indices))
+            self._prev_actions[dones] = 0.0
 
         self._compute_obs()
         self._apply_obs_noise()
@@ -1341,15 +1361,23 @@ class NewtonDroneEnv(VecEnv):
         self.wind_step_counter = 0
 
     def _apply_wind_forces(self):
-        """Apply wind forces to all drone bodies in the current state."""
+        """Apply steady wind + random gusts to all drone bodies."""
         body_f_np = self.state_0.body_f.numpy()
+        gust_prob = self.cfg.wind_gust_prob
+        gust_force = self.cfg.wind_gust_force
         for i in range(self.n_envs):
+            wf = self.wind_force[i].copy()
+            if gust_prob > 0 and np.random.random() < gust_prob:
+                gust_angle = np.random.uniform(0, 2 * np.pi)
+                gust_mag = np.random.uniform(0.5, 1.0) * gust_force
+                wf[0] += gust_mag * np.cos(gust_angle)
+                wf[1] += gust_mag * np.sin(gust_angle)
+                wf[2] += np.random.uniform(-0.3, 0.3) * gust_force
             for d in range(self._num_drone_bodies):
                 body_idx = i * self.bodies_per_world + d
-                # Add wind as spatial vector [force_x, force_y, force_z, torque_x, torque_y, torque_z]
-                body_f_np[body_idx][0] += self.wind_force[i, 0]
-                body_f_np[body_idx][1] += self.wind_force[i, 1]
-                body_f_np[body_idx][2] += self.wind_force[i, 2]
+                body_f_np[body_idx][0] += wf[0]
+                body_f_np[body_idx][1] += wf[1]
+                body_f_np[body_idx][2] += wf[2]
         self.state_0.body_f = wp.array(body_f_np, dtype=wp.spatial_vector, device=self.device)
 
     def _apply_obs_noise(self):
