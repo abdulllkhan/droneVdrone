@@ -94,6 +94,8 @@ class AegisConfig:
     sensor_range: float = 350.0        # 0 = unlimited
     obs_noise_std: float = 0.0
     obs_opportunistic: bool = True     # 8-dim nearest-other-attacker block
+    obs_zero_pip: bool = False         # zero PIP hint [22:25] (train-time knockout
+                                       # for minimal-sensor hardware builds)
 
     # Wind
     wind_enabled: bool = False
@@ -1262,7 +1264,7 @@ class AegisSwarmEnv(VecEnv):
         obs[..., 17] = closing / 120.0
         obs[..., 18:21] = los
         obs[..., 21] = goal_dist_t / 500.0
-        obs[..., 22:25] = (pip - self.def_pos) / 500.0
+        obs[..., 22:25] = 0.0 if c.obs_zero_pip else (pip - self.def_pos) / 500.0
         obs[..., 25] = 1.0
 
         # --- assignment meta [26:29] ---
