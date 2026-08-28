@@ -320,6 +320,16 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**NIGHT 2 (2026-08-28, branch DD-17): CRAZYFLIE-READY + CONVOY ESCORT** — see
+`experiments/night2_20260828/results.md`. **`aegis_cf_lab`** = validated lab
+policy via pure unit-mapping (L=125, T=√2 → 0.34 m/s / 3 m/s² / 8.49 Hz, minimal
+sensor obs): gate 1.00 on every N≥M small-team cell vs control's 0.82–0.98,
+mean breach 7× lower. **Convoy escort** shipped (moving target, terrain-aware
+wander): the ego-centric obs made escort free — static champion already 1.00 on
+10 m/s targets; convoy fine-tune matches with attrition 15.3%→10.7%. Next: cflib
+hardware bridge (first real CrazyFlie flight), n_max=20 OOM profiling (use ≤288
+worlds until fixed).
+
 **ROUND 2 (2026-08-27 03:58): CHAMPION = `aegis_largeP_stage3_realism_best`** —
 attrition-priced retrain (bad_death −60, safety −0.10): urban attrition 22.7%→
 **13.3%** at 1.00 win, training-time mixed-terrain attrition →0.047. Scripted
