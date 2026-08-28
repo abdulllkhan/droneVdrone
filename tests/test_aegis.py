@@ -337,6 +337,39 @@ def test_moving_target_convoy():
 
 
 @needs_cuda
+def test_cf_bridge_encoder_matches_env():
+    """The deployment ObsEncoder must be bit-compatible with the sim's defender
+    obs — encoder/env drift is the #1 sim-to-real failure mode."""
+    import warp as wp
+    wp.init()
+    from envs.aegis_env import AegisSwarmEnv, AegisConfig
+    from deploy.cf_bridge import ObsEncoder
+    env = AegisSwarmEnv(1, AegisConfig(
+        n_max=3, m_max=3, fixed_nm=(3, 3), n_range=(3, 3), m_range=(3, 3),
+        terrain="none", num_obstacles=0, wind_enabled=False, sensor_range=0.0,
+        kamikaze=False, obs_opportunistic=False, obs_zero_pip=True,
+        obs_noise_std=0.0, seed=9))
+    env.reset()
+    rng = np.random.default_rng(0)
+    for _ in range(40):
+        env.step_async(rng.uniform(-1, 1, (env.n_envs, 3)).astype(np.float32))
+        env.step_wait()
+    enc = ObsEncoder(3, 3)
+    enc.assign = env.assign.copy()
+    enc.stations = env.stations.copy()
+    enc.steps_since_reassign = env.steps_since_reassign - 1  # encode() adds 1
+    enc.step = 1                                             # skip internal realloc
+    obs = enc.encode(env.def_pos.copy(), env.def_vel.copy(),
+                     env.att_pos.copy(), env.att_vel.copy(),
+                     env.def_alive.copy(), env.att_active.copy(),
+                     env.target_pos.copy())
+    ref = env.def_obs_buf.reshape(3, 56)
+    diff = np.abs(obs - ref)
+    assert diff.max() < 2e-5, f"encoder drift: max diff {diff.max():.2e} at dim {int(np.unravel_index(diff.argmax(), diff.shape)[1])}"
+    env.close()
+
+
+@needs_cuda
 def test_obs_contract_across_sizes():
     import warp as wp
     wp.init()
