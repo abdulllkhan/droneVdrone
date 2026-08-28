@@ -12,7 +12,8 @@ import os
 import numpy as np
 
 
-def rollout(model_path, n, m, kamikaze, strategy, realism, seed, terrain="hills"):
+def rollout(model_path, n, m, kamikaze, strategy, realism, seed, terrain="hills",
+            target_speed=0.0):
     import warp as wp
     wp.init()
     from stable_baselines3 import PPO
@@ -20,7 +21,8 @@ def rollout(model_path, n, m, kamikaze, strategy, realism, seed, terrain="hills"
 
     kw = dict(n_max=n, m_max=m, fixed_nm=(n, m), n_range=(n, n), m_range=(m, m),
               kamikaze=kamikaze, attacker_strategies=(strategy,), seed=seed,
-              terrain=terrain)
+              terrain=terrain,
+              target_speed_range=(target_speed, target_speed))
     if realism:
         kw.update(num_obstacles=5, wind_enabled=True, wind_max_force=0.5,
                   wind_gust_prob=0.01, wind_gust_force=1.5, sensor_range=300.0)
@@ -28,6 +30,14 @@ def rollout(model_path, n, m, kamikaze, strategy, realism, seed, terrain="hills"
     model = PPO.load(model_path, device="cuda")
 
     obs = env.reset()
+    # capture terrain meta BEFORE stepping: the loop ends after the world has
+    # already auto-reset, so a post-loop capture reads the NEXT episode's world
+    meta = dict(target=env.target_pos[0].copy(),
+                hills=(env.obstacle_pos[0][:env.hill_count[0]].copy()
+                       if env.hill_count[0] else None),
+                boxes=(env.box_obs[0][:env.box_count[0]].copy()
+                       if env.box_count[0] else None),
+                hill_r=env.cfg.obstacle_radius, bounds=env.cfg.arena_bounds)
     frames = []
     for _ in range(env.max_steps + 1):
         frames.append(dict(
@@ -35,20 +45,14 @@ def rollout(model_path, n, m, kamikaze, strategy, realism, seed, terrain="hills"
             da=env.def_alive[0].copy(), aa=env.att_active[0].copy(),
             ab=env.att_breached[0].copy(), at=env.att_terrain[0].copy(),
             assign=env.assign[0].copy(), t=int(env.step_count[0]),
-            ic=int(env.ep_intercepts[0]),
+            ic=int(env.ep_intercepts[0]), tp=env.target_pos[0].copy(),
         ))
         acts, _ = model.predict(obs, deterministic=True)
         env.step_async(acts)
         obs, _, _, _ = env.step_wait()
         if env.step_count[0] < frames[-1]["t"]:   # world reset -> episode over
             break
-    meta = dict(target=env.target_pos[0].copy(),
-                hills=(env.obstacle_pos[0][:env.hill_count[0]].copy()
-                       if env.hill_count[0] else None),
-                boxes=(env.box_obs[0][:env.box_count[0]].copy()
-                       if env.box_count[0] else None),
-                hill_r=env.cfg.obstacle_radius, bounds=env.cfg.arena_bounds,
-                outcome=env.pop_outcomes() or [{}])
+    meta["outcome"] = env.pop_outcomes() or [{}]
     env.close()
     return frames, meta
 
@@ -83,7 +87,10 @@ def render(frames, meta, out_path, title, stride=2, fps=18, trail=18):
                 ax.add_patch(Rectangle((bx[0] - bx[2], bx[1] - bx[3]),
                                        2 * bx[2], 2 * bx[3],
                                        color="#44475e", alpha=0.95, zorder=1))
-        tg = meta["target"]
+        tg = f.get("tp", meta["target"])
+        tps = [frames[k * stride].get("tp", meta["target"]) for k in range(0, fi + 1)]
+        ax.plot([p[0] for p in tps], [p[1] for p in tps],
+                c="#ffd700", alpha=0.35, lw=1.4, zorder=4)
         ax.scatter([tg[0]], [tg[1]], marker="*", s=420, c="#ffd700",
                    edgecolors="#fff", zorder=5, label="target")
         # trails
@@ -147,6 +154,8 @@ def main():
                             "saturation", "waves", "decoy"])
     p.add_argument("--terrain", default="hills",
                    choices=["hills", "urban", "maze", "none"])
+    p.add_argument("--target-speed", type=float, default=0.0,
+                   help="moving-target (convoy) speed in m/s")
     p.add_argument("--plain", action="store_true", help="no hills/wind")
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--out", default="")
@@ -159,7 +168,8 @@ def main():
     out = args.out or (f"models/eval_output/aegis_"
                        f"{'kam' if args.kamikaze else 'reuse'}_{n}v{m}_{args.strategy}{tslug}.gif")
     frames, meta = rollout(args.model, n, m, args.kamikaze, args.strategy,
-                           not args.plain, args.seed, terrain=args.terrain)
+                           not args.plain, args.seed, terrain=args.terrain,
+                           target_speed=args.target_speed)
     o = (meta["outcome"] or [{}])[0]
     title = f"AEGIS {n}v{m} [{args.strategy}]" + (" kamikaze" if args.kamikaze else " reusable")
     nf = render(frames, meta, out, title, stride=args.stride, fps=args.fps)

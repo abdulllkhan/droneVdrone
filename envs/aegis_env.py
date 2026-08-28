@@ -149,6 +149,13 @@ class AegisConfig:
     r_safety_coeff: float = -0.05
     boundary_margin: float = 25.0
 
+    # Moving protected target ("convoy escort"). (0,0) = static, bit-identical
+    # to prior behavior. Speed sampled per world per episode; the target wanders
+    # waypoint-to-waypoint inside target_wander_radius (capped per terrain).
+    target_speed_range: tuple = (0.0, 0.0)
+    target_wander_radius: float = 250.0
+    target_waypoint_tol: float = 5.0
+
     # Spawns
     defender_dist_range: tuple = (20.0, 120.0)
     defender_alt_range: tuple = (30.0, 150.0)
@@ -316,6 +323,11 @@ class AegisSwarmEnv(VecEnv):
         self.gate_pos = np.zeros((W, 12, 3), dtype=np.float32)
         self.gate_count = np.zeros(W, dtype=np.int64)
         self.is_maze = np.zeros(W, dtype=bool)
+        # moving-target (convoy) state
+        self.target_pos_prev = np.zeros((W, 3), dtype=np.float32)
+        self.target_vel = np.zeros((W, 3), dtype=np.float32)
+        self.target_speed_w = np.zeros(W, dtype=np.float32)
+        self.target_wp = np.zeros((W, 2), dtype=np.float32)
 
         self.hill_count = np.zeros(W, dtype=np.int64)
 
@@ -549,6 +561,46 @@ class AegisSwarmEnv(VecEnv):
             mag = rng.uniform(0, c.wind_max_force)
             self._wind_np[w] = (mag * np.cos(ang), mag * np.sin(ang), 0.0)
 
+        # moving-target (convoy) init — AFTER terrain, the sampler needs obstacles
+        self.target_speed_w[w] = rng.uniform(*c.target_speed_range)
+        self.target_vel[w] = 0.0
+        self.target_pos_prev[w] = self.target_pos[w]
+        self.target_wp[w] = (self._sample_target_wp(w)
+                             if self.target_speed_w[w] > 0
+                             else self.target_pos[w, :2])
+
+    def _effective_wander_radius(self, w):
+        cap = _TARGET_TERRAIN_CAP.get(self.world_terrain[w], np.inf)
+        return min(self.cfg.target_wander_radius, cap)
+
+    def _sample_target_wp(self, w):
+        """Waypoint whose approach segment stays clear of terrain kill zones."""
+        rng = self._rng
+        radius = self._effective_wander_radius(w)
+        cur = self.target_pos[w, :2]
+        if radius <= 0:
+            return cur.copy()
+        for _ in range(20):
+            ang = rng.uniform(0, 2 * np.pi)
+            r = radius * np.sqrt(rng.uniform())
+            cand = np.array([r * np.cos(ang), r * np.sin(ang)], dtype=np.float32)
+            pts = cur[None, :] + np.linspace(0, 1, 16)[:, None] * (cand - cur)[None, :]
+            ok = True
+            H = int(self.hill_count[w])
+            if H and np.min(np.linalg.norm(
+                    pts[:, None, :] - self.obstacle_pos[w, :H, :2][None], axis=-1)) < 100.0:
+                ok = False
+            B = int(self.box_count[w])
+            if ok and B:
+                bx = self.box_obs[w, :B]
+                dx = np.abs(pts[:, None, 0] - bx[None, :, 0]) - bx[None, :, 2]
+                dy = np.abs(pts[:, None, 1] - bx[None, :, 1]) - bx[None, :, 3]
+                if np.min(np.hypot(np.maximum(dx, 0), np.maximum(dy, 0))) < 15.0:
+                    ok = False
+            if ok:
+                return cand
+        return (0.5 * cur).astype(np.float32)   # pull toward the clear center
+
     def _upload_resets(self, mask):
         """Push spawn positions/masses/wind for masked worlds to the GPU."""
         mask_wp = wp.array(mask.astype(np.int32), dtype=int, device=self.device)
@@ -569,6 +621,7 @@ class AegisSwarmEnv(VecEnv):
         self.att_pos[idx] = flat[idx, self.n_max:]
         self.def_pos_prev[idx] = self.def_pos[idx]
         self.att_pos_prev[idx] = self.att_pos[idx]
+        self.target_pos_prev[idx] = self.target_pos[idx]
         self.def_vel[idx] = 0.0
         self.att_vel[idx] = 0.0
 
@@ -610,7 +663,7 @@ class AegisSwarmEnv(VecEnv):
             self.def_pos[idx], self.def_alive[idx], self.att_pos[idx],
             self.att_vel[idx], self.att_active[idx], self.att_detected[idx],
             self.target_pos[idx], self.cfg.defender_speed_limit,
-            prev_assign=self.assign[idx],
+            prev_assign=self.assign[idx], target_vel=self.target_vel[idx],
         )
         new_assign = self.assign.copy()
         new_assign[idx] = sub_assign
@@ -882,6 +935,22 @@ class AegisSwarmEnv(VecEnv):
         self.att_vel = body_qd[:, N:, :3].astype(np.float32)
         self.step_count += 1
 
+        # --- moving target (convoy): advance toward waypoint ---
+        self.target_pos_prev[:] = self.target_pos
+        moving = self.target_speed_w > 0
+        if moving.any():
+            to_wp = self.target_wp - self.target_pos[:, :2]
+            d_wp = np.linalg.norm(to_wp, axis=-1)
+            go = moving & (d_wp > 1e-6)
+            stp = np.minimum(self.target_speed_w * self.dt, d_wp)
+            dirv = to_wp / np.maximum(d_wp, 1e-6)[:, None]
+            self.target_pos[:, :2] += np.where(go[:, None], dirv * stp[:, None], 0.0)
+            self.target_vel[:, :2] = np.where(
+                go[:, None], dirv * self.target_speed_w[:, None], 0.0)
+            self.target_vel[:, 2] = 0.0
+            for w in np.nonzero(moving & (d_wp < c.target_waypoint_tol))[0]:
+                self.target_wp[w] = self._sample_target_wp(int(w))
+
         rewards = np.zeros((W, N), dtype=np.float32)
         dones = np.zeros((W, N), dtype=bool)
         infos = [{} for _ in range(self.n_envs)]
@@ -918,8 +987,9 @@ class AegisSwarmEnv(VecEnv):
                         self.ep_first_intercept[w] = int(self.step_count[w])
                     self.realloc_needed[w] = True
 
-        # --- 6. swept breaches (attacker vs its world's target) ---
-        b0 = self.att_pos_prev - self.target_pos[:, None, :]
+        # --- 6. swept breaches (attacker vs its world's target, target-relative
+        #        frame so the check stays exact for a MOVING target) ---
+        b0 = self.att_pos_prev - self.target_pos_prev[:, None, :]
         b1 = self.att_pos - self.target_pos[:, None, :]
         breach_min = segment_min_dist(b0, b1)                            # (W, M)
         breach_hit = (breach_min < c.target_reached_dist) & self.att_active
@@ -1495,3 +1565,4 @@ class AegisSwarmEnv(VecEnv):
 
 _STRATEGIES = ("direct", "flanking", "mixed", "jink", "rl",
                "saturation", "waves", "decoy")
+_TARGET_TERRAIN_CAP = {"urban": 60.0, "maze": 0.0}

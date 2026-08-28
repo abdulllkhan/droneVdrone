@@ -72,14 +72,23 @@ def assigned_tgo(def_pos, def_speed, att_pos, att_vel, assign):
 
 
 def build_cost(def_pos, def_alive, att_pos, att_vel, att_assignable,
-               target_pos, def_speed, prev_assign, hysteresis=0.5):
-    """Cost matrix (W, N, M) with np.inf for invalid pairs."""
+               target_pos, def_speed, prev_assign, hysteresis=0.5,
+               target_vel=None):
+    """Cost matrix (W, N, M) with np.inf for invalid pairs.
+
+    target_vel (W, 3), optional: with a MOVING protected target, t_breach must
+    use the attacker's speed in the target frame or the ±20% error can flip the
+    feasibility penalty. None (static) is bit-identical to the original.
+    """
     W, N, _ = def_pos.shape
     M = att_pos.shape[1]
 
     tgo = time_to_go(def_pos, def_speed, att_pos, att_vel)        # (W, N, M)
 
-    att_speed = np.linalg.norm(att_vel, axis=-1)                  # (W, M)
+    if target_vel is not None:
+        att_speed = np.linalg.norm(att_vel - target_vel[:, None, :], axis=-1)
+    else:
+        att_speed = np.linalg.norm(att_vel, axis=-1)              # (W, M)
     dist_to_target = np.linalg.norm(att_pos - target_pos[:, None, :], axis=-1)
     with np.errstate(divide="ignore"):
         t_breach = np.where(att_speed > 0.1, dist_to_target / np.maximum(att_speed, 0.1),
@@ -147,7 +156,7 @@ def greedy_sweep(cost):
 
 def allocate(def_pos, def_alive, att_pos, att_vel, att_active, att_detected,
              target_pos, def_speed, prev_assign=None, hysteresis=0.5,
-             double_up=True):
+             double_up=True, target_vel=None):
     """Full AEGIS allocation for a batch of worlds.
 
     Args:
@@ -167,7 +176,8 @@ def allocate(def_pos, def_alive, att_pos, att_vel, att_active, att_detected,
         sweep = greedy_sweep
 
     cost = build_cost(def_pos, def_alive, att_pos, att_vel, att_assignable,
-                      target_pos, def_speed, prev_assign, hysteresis)
+                      target_pos, def_speed, prev_assign, hysteresis,
+                      target_vel=target_vel)
     assign = sweep(cost)
 
     if double_up:
@@ -176,7 +186,8 @@ def allocate(def_pos, def_alive, att_pos, att_vel, att_active, att_detected,
         unassigned = def_alive & (assign == GUARD)
         if unassigned.any():
             cost2 = build_cost(def_pos, unassigned, att_pos, att_vel, att_assignable,
-                               target_pos, def_speed, prev_assign, hysteresis)
+                               target_pos, def_speed, prev_assign, hysteresis,
+                               target_vel=target_vel)
             assign2 = sweep(cost2)
             take = assign2 >= 0
             assign[take] = assign2[take]

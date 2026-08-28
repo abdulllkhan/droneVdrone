@@ -298,6 +298,45 @@ def test_reassignment_is_reward_neutral(small_env):
 
 
 @needs_cuda
+def test_moving_target_convoy():
+    """Target advances at the configured speed, stays in bounds and clear of
+    terrain kill zones, keeps exact prev-frame bookkeeping, and attackers can
+    still breach it. Defaults elsewhere stay static (test_env_step_invariants
+    is the bit-identical regression for that)."""
+    import warp as wp
+    wp.init()
+    from envs.aegis_env import AegisSwarmEnv, AegisConfig
+    env = AegisSwarmEnv(2, AegisConfig(
+        n_max=2, m_max=2, fixed_nm=(2, 2), n_range=(2, 2), m_range=(2, 2),
+        terrain="hills", num_obstacles=3, kamikaze=False,
+        target_speed_range=(10.0, 10.0), seed=11))
+    env.reset()
+    max_step = 10.0 / 12.0 + 1e-3
+    breaches = 0
+    prev = env.target_pos.copy()
+    for i in range(400):
+        env.step_async(np.zeros((env.n_envs, 3), dtype=np.float32))
+        env.step_wait()
+        for w in range(2):
+            if env.step_count[w] > 1:   # same episode as last step
+                d = np.linalg.norm(env.target_pos[w, :2] - prev[w, :2])
+                assert d <= max_step + 1e-6
+                assert np.allclose(env.target_pos_prev[w], prev[w], atol=1e-5)
+            r = np.linalg.norm(env.target_pos[w, :2])
+            assert r <= env.cfg.target_wander_radius + env.cfg.target_waypoint_tol + 1.0
+            H = int(env.hill_count[w])
+            if H:
+                hd = np.linalg.norm(
+                    env.obstacle_pos[w, :H, :2] - env.target_pos[w, :2][None], axis=-1)
+                assert hd.min() > 55.0   # never inside a kill shell
+        prev = env.target_pos.copy()
+        for o in env.pop_outcomes():
+            breaches += o["breaches"]
+    assert breaches > 0, "attackers never breached a moving target"
+    env.close()
+
+
+@needs_cuda
 def test_obs_contract_across_sizes():
     import warp as wp
     wp.init()
