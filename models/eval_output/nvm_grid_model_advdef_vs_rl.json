@@ -1,0 +1,72 @@
+[
+  {
+    "n": 3,
+    "m": 5,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.20833333333333334,
+    "breach_rate": 0.3958333333333333,
+    "mean_leakers": 1.9791666666666667,
+    "exchange_ratio": 0.2653061224489796,
+    "bad_death_rate": 0.25,
+    "terrain_kill_rate": 0.5125,
+    "time_to_first_intercept_s": 23.699999999999996,
+    "mean_length_s": 54.657986111111114
+  },
+  {
+    "n": 5,
+    "m": 3,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.2916666666666667,
+    "breach_rate": 0.4375,
+    "mean_leakers": 1.3125,
+    "exchange_ratio": 0.3076923076923077,
+    "bad_death_rate": 0.15,
+    "terrain_kill_rate": 0.4097222222222222,
+    "time_to_first_intercept_s": 21.614583333333336,
+    "mean_length_s": 53.83159722222222
+  },
+  {
+    "n": 5,
+    "m": 5,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.25,
+    "breach_rate": 0.3958333333333333,
+    "mean_leakers": 1.9791666666666667,
+    "exchange_ratio": 0.3055555555555556,
+    "bad_death_rate": 0.20833333333333334,
+    "terrain_kill_rate": 0.4666666666666667,
+    "time_to_first_intercept_s": 29.600877192982455,
+    "mean_length_s": 55.02256944444445
+  },
+  {
+    "n": 8,
+    "m": 5,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.22916666666666666,
+    "breach_rate": 0.30416666666666664,
+    "mean_leakers": 1.5208333333333333,
+    "exchange_ratio": 0.36885245901639346,
+    "bad_death_rate": 0.20052083333333334,
+    "terrain_kill_rate": 0.5,
+    "time_to_first_intercept_s": 24.126436781609193,
+    "mean_length_s": 55.682291666666664
+  },
+  {
+    "n": 8,
+    "m": 8,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.22916666666666666,
+    "breach_rate": 0.2630208333333333,
+    "mean_leakers": 2.1041666666666665,
+    "exchange_ratio": 0.4883720930232558,
+    "bad_death_rate": 0.171875,
+    "terrain_kill_rate": 0.5338541666666666,
+    "time_to_first_intercept_s": 21.794270833333336,
+    "mean_length_s": 57.07465277777778
+  }
+]

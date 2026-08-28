@@ -1,0 +1,9 @@
+=== 2026-08-20 00:19:47 START adv_cotrain
+=== 2026-08-20 00:39:51 END(exit=0) adv_cotrain
+=== 2026-08-20 00:39:51 START eval_patch_vs_rl
+=== 2026-08-20 00:40:11 END(exit=0) eval_patch_vs_rl
+=== 2026-08-20 00:40:11 START eval_advdef_vs_rl
+=== 2026-08-20 00:40:48 END(exit=0) eval_advdef_vs_rl
+=== 2026-08-20 00:40:48 START eval_advdef_scripted
+=== 2026-08-20 00:41:44 END(exit=0) eval_advdef_scripted
+=== 2026-08-20 00:41:44 ALL_DONE queue

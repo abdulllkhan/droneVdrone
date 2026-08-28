@@ -1,0 +1,132 @@
+/home/abdulllkhan/Documents/droneVdrone/venv/lib/python3.12/site-packages/stable_baselines3/common/on_policy_algorithm.py:150: UserWarning: You are trying to run PPO on the GPU, but it is primarily intended to run on the CPU when not using a CNN policy (you are using ActorCriticPolicy which should be a MlpPolicy). See https://github.com/DLR-RM/stable-baselines3/issues/1245 for more info. You can pass `device='cpu'` or `export CUDA_VISIBLE_DEVICES=` to force using the CPU.Note: The model will train, but the GPU utilization will be poor and the training might take longer than on CPU.
+  warnings.warn(
+pybullet build time: Mar 22 2026 22:06:37
+/home/abdulllkhan/Documents/droneVdrone/venv/lib/python3.12/site-packages/stable_baselines3/common/vec_env/base_vec_env.py:78: UserWarning: The `render_mode` attribute is not defined in your environment. It will be set to None.
+  warnings.warn("The `render_mode` attribute is not defined in your environment. It will be set to None.")
+Warp 1.12.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.0
+   Devices:
+     "cpu"      : "aarch64"
+     "cuda:0"   : "NVIDIA GB10" (122 GiB, sm_121, mempool enabled)
+   Kernel cache:
+     /home/abdulllkhan/.cache/warp/1.12.0
+Module validate_and_correct_inertia_kernel_8fd4dd1e 8fd4dd1 load on device 'cuda:0' took 0.74 ms  (cached)
+Module envs.aegis_env dbac9b8 load on device 'cuda:0' took 0.56 ms  (cached)
+Module newton._src.solvers.semi_implicit.kernels_body 51a0ce7 load on device 'cuda:0' took 1.45 ms  (cached)
+Module newton._src.solvers.solver 2c8892b load on device 'cuda:0' took 0.49 ms  (cached)
+  1v1 [direct   ] win=84% breach=0.156 leakers=0.16 bad=15.62%
+  1v1 [flanking ] win=88% breach=0.125 leakers=0.12 bad=15.62%
+  1v1 [jink     ] win=81% breach=0.188 leakers=0.19 bad=18.75%
+  1v2 [direct   ] win=28% breach=0.406 leakers=0.81 xr=0.90 bad=9.38%
+  1v2 [flanking ] win=31% breach=0.359 leakers=0.72 xr=0.97 bad=3.12%
+  1v2 [jink     ] win=34% breach=0.391 leakers=0.78 xr=0.83 bad=15.62%
+  1v3 [direct   ] win=6% breach=0.531 leakers=1.59 xr=0.88 bad=12.50%
+  1v3 [flanking ] win=6% breach=0.562 leakers=1.69 xr=0.81 bad=18.75%
+  1v3 [jink     ] win=6% breach=0.562 leakers=1.69 xr=0.75 bad=25.00%
+  1v5 [direct   ] win=0% breach=0.631 leakers=3.16 xr=0.94 bad=6.25%
+  1v5 [flanking ] win=6% breach=0.600 leakers=3.00 xr=0.84 bad=15.62%
+  1v5 [jink     ] win=0% breach=0.600 leakers=3.00 xr=0.91 bad=9.38%
+  1v8 [direct   ] win=0% breach=0.715 leakers=5.72 xr=0.91 bad=9.38%
+  1v8 [flanking ] win=0% breach=0.727 leakers=5.81 xr=0.91 bad=9.38%
+  1v8 [jink     ] win=0% breach=0.734 leakers=5.88 xr=0.91 bad=9.38%
+  1v10 [direct   ] win=0% breach=0.759 leakers=7.59 xr=0.72 bad=28.12%
+  1v10 [flanking ] win=0% breach=0.719 leakers=7.19 xr=0.78 bad=21.88%
+  1v10 [jink     ] win=0% breach=0.762 leakers=7.62 xr=0.78 bad=21.88%
+  3v1 [direct   ] win=100% breach=0.000 leakers=0.00 bad=6.25%
+  3v1 [flanking ] win=100% breach=0.000 leakers=0.00 bad=9.38%
+  3v1 [jink     ] win=100% breach=0.000 leakers=0.00 bad=7.29%
+  3v2 [direct   ] win=94% breach=0.031 leakers=0.06 bad=13.54%
+  3v2 [flanking ] win=94% breach=0.047 leakers=0.09 bad=12.50%
+  3v2 [jink     ] win=91% breach=0.062 leakers=0.12 bad=11.46%
+  3v3 [direct   ] win=91% breach=0.052 leakers=0.16 bad=16.67%
+  3v3 [flanking ] win=91% breach=0.031 leakers=0.09 bad=8.33%
+  3v3 [jink     ] win=91% breach=0.031 leakers=0.09 bad=9.38%
+  3v5 [direct   ] win=28% breach=0.281 leakers=1.41 xr=0.85 bad=14.58%
+  3v5 [flanking ] win=22% breach=0.269 leakers=1.34 xr=0.85 bad=14.58%
+  3v5 [jink     ] win=28% breach=0.256 leakers=1.28 xr=0.86 bad=13.54%
+  3v8 [direct   ] win=6% breach=0.445 leakers=3.56 xr=0.91 bad=9.38%
+  3v8 [flanking ] win=3% breach=0.434 leakers=3.47 xr=0.86 bad=13.54%
+  3v8 [jink     ] win=3% breach=0.449 leakers=3.59 xr=0.85 bad=14.58%
+  3v10 [direct   ] win=0% breach=0.494 leakers=4.94 xr=0.81 bad=18.75%
+  3v10 [flanking ] win=0% breach=0.481 leakers=4.81 xr=0.85 bad=14.58%
+  3v10 [jink     ] win=0% breach=0.512 leakers=5.12 xr=0.84 bad=15.62%
+  5v1 [direct   ] win=100% breach=0.000 leakers=0.00 bad=9.38%
+  5v1 [flanking ] win=97% breach=0.031 leakers=0.03 bad=11.25%
+  5v1 [jink     ] win=100% breach=0.000 leakers=0.00 bad=6.88%
+  5v2 [direct   ] win=100% breach=0.000 leakers=0.00 bad=9.38%
+  5v2 [flanking ] win=100% breach=0.000 leakers=0.00 bad=12.50%
+  5v2 [jink     ] win=100% breach=0.000 leakers=0.00 bad=9.38%
+  5v3 [direct   ] win=100% breach=0.000 leakers=0.00 bad=16.88%
+  5v3 [flanking ] win=100% breach=0.000 leakers=0.00 bad=15.62%
+  5v3 [jink     ] win=97% breach=0.010 leakers=0.03 bad=20.00%
+  5v5 [direct   ] win=75% breach=0.056 leakers=0.28 bad=16.88%
+  5v5 [flanking ] win=84% breach=0.044 leakers=0.22 bad=18.75%
+  5v5 [jink     ] win=88% breach=0.044 leakers=0.22 bad=16.25%
+  5v8 [direct   ] win=31% breach=0.207 leakers=1.66 xr=0.88 bad=11.25%
+  5v8 [flanking ] win=31% breach=0.195 leakers=1.56 xr=0.86 bad=13.75%
+  5v8 [jink     ] win=22% breach=0.238 leakers=1.91 xr=0.88 bad=11.25%
+  5v10 [direct   ] win=0% breach=0.334 leakers=3.34 xr=0.90 bad=10.00%
+  5v10 [flanking ] win=0% breach=0.356 leakers=3.56 xr=0.89 bad=10.62%
+  5v10 [jink     ] win=0% breach=0.350 leakers=3.50 xr=0.89 bad=11.25%
+  7v1 [direct   ] win=100% breach=0.000 leakers=0.00 bad=10.27%
+  7v1 [flanking ] win=100% breach=0.000 leakers=0.00 bad=7.14%
+  7v1 [jink     ] win=100% breach=0.000 leakers=0.00 bad=8.93%
+  7v2 [direct   ] win=100% breach=0.000 leakers=0.00 bad=14.29%
+  7v2 [flanking ] win=100% breach=0.000 leakers=0.00 bad=12.95%
+  7v2 [jink     ] win=100% breach=0.000 leakers=0.00 bad=14.29%
+  7v3 [direct   ] win=100% breach=0.000 leakers=0.00 bad=16.96%
+  7v3 [flanking ] win=100% breach=0.000 leakers=0.00 bad=16.52%
+  7v3 [jink     ] win=97% breach=0.010 leakers=0.03 bad=14.73%
+  7v5 [direct   ] win=97% breach=0.013 leakers=0.06 bad=18.75%
+  7v5 [flanking ] win=97% breach=0.013 leakers=0.06 bad=20.54%
+  7v5 [jink     ] win=97% breach=0.019 leakers=0.09 bad=16.52%
+  7v8 [direct   ] win=72% breach=0.059 leakers=0.47 xr=0.79 bad=19.64%
+  7v8 [flanking ] win=62% breach=0.078 leakers=0.62 xr=0.77 bad=20.54%
+  7v8 [jink     ] win=66% breach=0.059 leakers=0.47 xr=0.81 bad=16.96%
+  7v10 [direct   ] win=41% breach=0.147 leakers=1.47 xr=0.78 bad=20.98%
+  7v10 [flanking ] win=44% breach=0.125 leakers=1.25 xr=0.86 bad=13.84%
+  7v10 [jink     ] win=44% breach=0.119 leakers=1.19 xr=0.82 bad=16.52%
+  10v1 [direct   ] win=100% breach=0.000 leakers=0.00 bad=9.06%
+  10v1 [flanking ] win=100% breach=0.000 leakers=0.00 bad=9.69%
+  10v1 [jink     ] win=100% breach=0.000 leakers=0.00 bad=12.19%
+  10v2 [direct   ] win=100% breach=0.000 leakers=0.00 bad=10.94%
+  10v2 [flanking ] win=100% breach=0.000 leakers=0.00 bad=13.12%
+  10v2 [jink     ] win=100% breach=0.000 leakers=0.00 bad=16.25%
+  10v3 [direct   ] win=97% breach=0.010 leakers=0.03 bad=12.81%
+  10v3 [flanking ] win=100% breach=0.000 leakers=0.00 bad=16.88%
+  10v3 [jink     ] win=100% breach=0.000 leakers=0.00 bad=16.88%
+  10v5 [direct   ] win=97% breach=0.006 leakers=0.03 bad=16.25%
+  10v5 [flanking ] win=100% breach=0.000 leakers=0.00 bad=21.25%
+  10v5 [jink     ] win=100% breach=0.000 leakers=0.00 bad=20.31%
+  10v8 [direct   ] win=97% breach=0.004 leakers=0.03 bad=16.25%
+  10v8 [flanking ] win=97% breach=0.004 leakers=0.03 bad=18.44%
+  10v8 [jink     ] win=100% breach=0.000 leakers=0.00 bad=14.37%
+  10v10 [direct   ] win=94% breach=0.009 leakers=0.09 bad=15.62%
+  10v10 [flanking ] win=88% breach=0.025 leakers=0.25 bad=19.69%
+  10v10 [jink     ] win=84% breach=0.016 leakers=0.16 bad=22.19%
+  15v1 [direct   ] win=100% breach=0.000 leakers=0.00 bad=10.62%
+  15v1 [flanking ] win=100% breach=0.000 leakers=0.00 bad=8.54%
+  15v1 [jink     ] win=100% breach=0.000 leakers=0.00 bad=9.58%
+  15v2 [direct   ] win=100% breach=0.000 leakers=0.00 bad=13.96%
+  15v2 [flanking ] win=100% breach=0.000 leakers=0.00 bad=15.00%
+  15v2 [jink     ] win=100% breach=0.000 leakers=0.00 bad=12.71%
+  15v3 [direct   ] win=100% breach=0.000 leakers=0.00 bad=17.92%
+  15v3 [flanking ] win=100% breach=0.000 leakers=0.00 bad=19.79%
+  15v3 [jink     ] win=100% breach=0.000 leakers=0.00 bad=17.08%
+  15v5 [direct   ] win=100% breach=0.000 leakers=0.00 bad=24.38%
+  15v5 [flanking ] win=100% breach=0.000 leakers=0.00 bad=21.04%
+  15v5 [jink     ] win=100% breach=0.000 leakers=0.00 bad=21.04%
+  15v8 [direct   ] win=100% breach=0.000 leakers=0.00 bad=15.00%
+  15v8 [flanking ] win=100% breach=0.000 leakers=0.00 bad=15.83%
+  15v8 [jink     ] win=100% breach=0.000 leakers=0.00 bad=17.71%
+  15v10 [direct   ] win=100% breach=0.000 leakers=0.00 bad=16.04%
+  15v10 [flanking ] win=100% breach=0.000 leakers=0.00 bad=18.96%
+  15v10 [jink     ] win=100% breach=0.000 leakers=0.00 bad=22.08%
+  6v4 [direct   ] win=97% breach=0.008 leakers=0.03 bad=16.15%
+  6v4 [flanking ] win=94% breach=0.016 leakers=0.06 bad=13.02%
+  6v4 [jink     ] win=97% breach=0.008 leakers=0.03 bad=16.15%
+  9v6 [direct   ] win=100% breach=0.000 leakers=0.00 bad=15.97%
+  9v6 [flanking ] win=97% breach=0.005 leakers=0.03 bad=16.67%
+  9v6 [jink     ] win=100% breach=0.000 leakers=0.00 bad=17.01%
+
+Wrote models/eval_output/nvm_grid_model_scratch3_realism.csv (+ .json, heatmap PNG)

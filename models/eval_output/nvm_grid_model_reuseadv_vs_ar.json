@@ -1,0 +1,72 @@
+[
+  {
+    "n": 3,
+    "m": 5,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.8333333333333334,
+    "breach_rate": 0.041666666666666664,
+    "mean_leakers": 0.20833333333333334,
+    "exchange_ratio": 7.0,
+    "bad_death_rate": 0.19444444444444445,
+    "terrain_kill_rate": 0.09166666666666666,
+    "time_to_first_intercept_s": 4.423611111111111,
+    "mean_length_s": 21.552083333333332
+  },
+  {
+    "n": 5,
+    "m": 3,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.9166666666666666,
+    "breach_rate": 0.034722222222222224,
+    "mean_leakers": 0.10416666666666667,
+    "exchange_ratio": 2.185185185185185,
+    "bad_death_rate": 0.225,
+    "terrain_kill_rate": 0.1111111111111111,
+    "time_to_first_intercept_s": 4.592013888888888,
+    "mean_length_s": 13.940972222222221
+  },
+  {
+    "n": 5,
+    "m": 5,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.9583333333333334,
+    "breach_rate": 0.008333333333333333,
+    "mean_leakers": 0.041666666666666664,
+    "exchange_ratio": 4.666666666666667,
+    "bad_death_rate": 0.1875,
+    "terrain_kill_rate": 0.10833333333333334,
+    "time_to_first_intercept_s": 3.7690972222222228,
+    "mean_length_s": 14.105902777777779
+  },
+  {
+    "n": 8,
+    "m": 5,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.9791666666666666,
+    "breach_rate": 0.004166666666666667,
+    "mean_leakers": 0.020833333333333332,
+    "exchange_ratio": 2.451219512195122,
+    "bad_death_rate": 0.21354166666666666,
+    "terrain_kill_rate": 0.15833333333333333,
+    "time_to_first_intercept_s": 3.5260416666666665,
+    "mean_length_s": 11.161458333333334
+  },
+  {
+    "n": 8,
+    "m": 8,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.9583333333333334,
+    "breach_rate": 0.005208333333333333,
+    "mean_leakers": 0.041666666666666664,
+    "exchange_ratio": 4.256410256410256,
+    "bad_death_rate": 0.203125,
+    "terrain_kill_rate": 0.12239583333333333,
+    "time_to_first_intercept_s": 3.482638888888889,
+    "mean_length_s": 14.359375
+  }
+]

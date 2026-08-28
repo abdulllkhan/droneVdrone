@@ -80,9 +80,22 @@ def stage_configs():
     ]
 
 
-def make_env(env_kwargs, num_worlds, seed):
+def parse_overrides(pairs):
+    """--set key=val overrides for AegisConfig; values parsed as python literals."""
+    import ast
+    out = {}
+    for p in pairs or []:
+        k, v = p.split("=", 1)
+        try:
+            out[k] = ast.literal_eval(v)
+        except (ValueError, SyntaxError):
+            out[k] = v
+    return out
+
+
+def make_env(env_kwargs, num_worlds, seed, overrides=None):
     from envs.aegis_env import AegisSwarmEnv, AegisConfig
-    cfg = AegisConfig(seed=seed, **env_kwargs)
+    cfg = AegisConfig(seed=seed, **{**env_kwargs, **(overrides or {})})
     return AegisSwarmEnv(num_worlds=num_worlds, config=cfg)
 
 
@@ -115,6 +128,7 @@ def outcome_metrics(outcomes):
         episodes=n,
         win=sum(o["win"] for o in outcomes) / n,
         breach_rate=(tot_breach + tot_stranded) / max(tot_att, 1),
+        true_breach_rate=tot_breach / max(tot_att, 1),
         mean_leakers=(tot_breach + tot_stranded) / n,
         bad_death_rate=sum(o["bad_deaths"] for o in outcomes) / max(tot_def, 1),
         mean_intercepts=sum(o["intercepts"] for o in outcomes) / n,
@@ -126,6 +140,7 @@ def outcome_metrics(outcomes):
 
 def fmt(m):
     return (f"win={m['win']:.2f} breach_rate={m['breach_rate']:.3f} "
+            f"true_breach={m.get('true_breach_rate', 0):.3f} "
             f"leakers={m['mean_leakers']:.2f} bad_death={m['bad_death_rate']:.3f} "
             f"intercepts={m['mean_intercepts']:.2f} t_first={m['mean_first_intercept_s']:.1f}s "
             f"timeout={m.get('timeout_rate', 0):.2f} (n={m['episodes']})")
@@ -189,8 +204,9 @@ def run_stage(args, stage, stage_idx, resume_path):
     num_worlds = max(8, int(stage["num_worlds"] * args.num_worlds_scale))
     log(f"=== Stage {stage_idx}: {stage['desc']} | {steps:,} steps | {num_worlds} worlds ===")
 
-    env = make_env(stage["env"], num_worlds, seed=1000 + stage_idx)
-    eval_env = make_env({**stage["env"], "cull_prob": 0.0}, 32, seed=12345)
+    ov = parse_overrides(args.set)
+    env = make_env(stage["env"], num_worlds, seed=1000 + stage_idx, overrides=ov)
+    eval_env = make_env({**stage["env"], "cull_prob": 0.0}, 32, seed=12345, overrides=ov)
     n_envs = env.n_envs
     log(f"  n_envs={n_envs} (streams) | rollout={128 * n_envs:,} transitions")
 
@@ -216,7 +232,7 @@ def run_stage(args, stage, stage_idx, resume_path):
             device="cuda", verbose=1, tensorboard_log="logs/tensorboard",
         )
 
-    name = f"aegis_{stage['name']}"
+    name = f"aegis{args.tag}_{stage['name']}"
     best_dir = f"models/{name}_best"
     callbacks = [
         CheckpointCallback(save_freq=max(1, steps // 10 // n_envs),
@@ -279,7 +295,14 @@ def main():
     p.add_argument("--num-worlds-scale", type=float, default=1.0)
     p.add_argument("--timesteps-scale", type=float, default=1.0)
     p.add_argument("--skip-gates", action="store_true")
+    p.add_argument("--set", action="append", default=[], metavar="KEY=VAL",
+                   help="AegisConfig override applied to every stage (repeatable), "
+                        "e.g. --set r_bad_death=-30 --set kamikaze=False")
+    p.add_argument("--tag", type=str, default="",
+                   help="suffix for model/tb names, e.g. _patch -> models/aegis_patch_stage0_*")
     args = p.parse_args()
+    if args.tag and not args.tag.startswith("_"):
+        args.tag = "_" + args.tag
 
     import warp as wp
     wp.init()

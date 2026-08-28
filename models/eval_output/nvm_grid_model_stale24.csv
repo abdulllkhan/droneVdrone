@@ -1,0 +1,5 @@
+n,m,strategy,episodes,win_rate,breach_rate,mean_leakers,exchange_ratio,bad_death_rate,terrain_kill_rate,time_to_first_intercept_s,mean_length_s
+5,5,direct,48,1.0,0.0,0.0,1.0,0.0,0.0,2.2760416666666665,4.904513888888888
+5,5,flanking,48,1.0,0.0,0.0,1.0,0.0,0.0,2.2864583333333335,4.819444444444445
+8,5,direct,48,1.0,0.0,0.0,1.0,0.0,0.0,2.071180555555556,4.300347222222222
+8,5,flanking,48,1.0,0.0,0.0,1.0,0.0,0.0,2.0677083333333335,4.3125

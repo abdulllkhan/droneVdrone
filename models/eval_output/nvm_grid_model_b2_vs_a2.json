@@ -1,0 +1,72 @@
+[
+  {
+    "n": 3,
+    "m": 5,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.5,
+    "breach_rate": 0.19166666666666668,
+    "mean_leakers": 0.9583333333333334,
+    "exchange_ratio": 0.7419354838709677,
+    "bad_death_rate": 0.05555555555555555,
+    "terrain_kill_rate": 0.6833333333333333,
+    "time_to_first_intercept_s": 17.469298245614034,
+    "mean_length_s": 43.03993055555555
+  },
+  {
+    "n": 5,
+    "m": 3,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.7708333333333334,
+    "breach_rate": 0.08333333333333333,
+    "mean_leakers": 0.25,
+    "exchange_ratio": 0.6521739130434783,
+    "bad_death_rate": 0.03333333333333333,
+    "terrain_kill_rate": 0.8055555555555556,
+    "time_to_first_intercept_s": 9.205128205128206,
+    "mean_length_s": 27.21875
+  },
+  {
+    "n": 5,
+    "m": 5,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.7708333333333334,
+    "breach_rate": 0.058333333333333334,
+    "mean_leakers": 0.2916666666666667,
+    "exchange_ratio": 0.6153846153846154,
+    "bad_death_rate": 0.041666666666666664,
+    "terrain_kill_rate": 0.8625,
+    "time_to_first_intercept_s": 13.826388888888886,
+    "mean_length_s": 32.557291666666664
+  },
+  {
+    "n": 8,
+    "m": 5,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.7083333333333334,
+    "breach_rate": 0.058333333333333334,
+    "mean_leakers": 0.2916666666666667,
+    "exchange_ratio": 0.5555555555555556,
+    "bad_death_rate": 0.041666666666666664,
+    "terrain_kill_rate": 0.8583333333333333,
+    "time_to_first_intercept_s": 9.880952380952381,
+    "mean_length_s": 33.3125
+  },
+  {
+    "n": 8,
+    "m": 8,
+    "strategy": "rl",
+    "episodes": 48,
+    "win_rate": 0.8958333333333334,
+    "breach_rate": 0.013020833333333334,
+    "mean_leakers": 0.10416666666666667,
+    "exchange_ratio": 0.6097560975609756,
+    "bad_death_rate": 0.041666666666666664,
+    "terrain_kill_rate": 0.9088541666666666,
+    "time_to_first_intercept_s": 10.829166666666666,
+    "mean_length_s": 29.100694444444443
+  }
+]

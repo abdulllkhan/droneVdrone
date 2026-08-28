@@ -1,0 +1,348 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AEGIS Runs</title><style>
+:root { color-scheme: light;
+  --s1:#fcfcfb; --s2:#f1f0ee; --ink:#0b0b0b; --ink2:#52514e; --line:#d8d6d2;
+  --c1:#2a78d6; --c2:#eb6834; --c3:#1baf7a; --c4:#eda100; --good:#008300; --bad:#c92a2a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  color-scheme: dark;
+  --s1:#1a1a19; --s2:#242423; --ink:#ffffff; --ink2:#c3c2b7; --line:#3a3936;
+  --c1:#3987e5; --c2:#d95926; --c3:#199e70; --c4:#c98500; --good:#31c48d; --bad:#f27979; } }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --s1:#1a1a19; --s2:#242423; --ink:#ffffff; --ink2:#c3c2b7; --line:#3a3936;
+  --c1:#3987e5; --c2:#d95926; --c3:#199e70; --c4:#c98500; --good:#31c48d; --bad:#f27979; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--s1); color:var(--ink);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; padding:24px; }
+h1 { font-size:26px; margin:0 0 2px; } h2 { font-size:18px; margin:32px 0 10px; }
+.sub { color:var(--ink2); font-size:13px; margin-bottom:22px; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+.tile { background:var(--s2); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+.tile .v { font-size:26px; font-weight:700; } .tile .k { color:var(--ink2); font-size:12.5px; }
+table { border-collapse:collapse; width:100%; font-size:13.5px; }
+th,td { text-align:left; padding:5px 10px; border-bottom:1px solid var(--line); }
+th { color:var(--ink2); font-weight:600; } td.num { font-variant-numeric:tabular-nums; }
+.bar { height:14px; border-radius:0 4px 4px 0; background:var(--c1); min-width:2px; }
+.barrow { display:grid; grid-template-columns:220px 1fr 64px; gap:10px; align-items:center;
+  padding:3px 0; } .barrow:hover { background:var(--s2); }
+.barlab { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.barval { font-size:13px; color:var(--ink2); font-variant-numeric:tabular-nums; }
+details { border:1px solid var(--line); border-radius:10px; margin:10px 0; background:var(--s2); }
+summary { cursor:pointer; padding:10px 14px; font-weight:600; }
+details pre { white-space:pre-wrap; padding:0 16px 14px; color:var(--ink2); font-size:12.5px; }
+.gifs { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:14px; }
+.gifs figure { margin:0; background:var(--s2); border:1px solid var(--line);
+  border-radius:10px; padding:8px; }
+.gifs img { width:100%; border-radius:6px; } .gifs figcaption { font-size:12.5px;
+  color:var(--ink2); padding:6px 4px 2px; }
+.legend { display:flex; gap:16px; font-size:12.5px; color:var(--ink2); margin:6px 0; }
+.sw { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:5px;
+  vertical-align:-1px; }
+.commits li { font-size:13px; color:var(--ink2); margin:3px 0; }
+.commits b { color:var(--ink); font-weight:600; }
+</style></head><body>
+<h1>AEGIS — Drone Swarm Defense</h1>
+<div class="sub">Results dashboard · generated 2026-08-27 03:59 · branch DD-16 ·
+regenerate with <code>python -m eval.dashboard</code></div>
+<div class="tiles"><div class="tile"><div class="v">large stage3 realism best</div><div class="k">Current champion</div></div>
+<div class="tile"><div class="v">96%</div><div class="k">Outnumbered (3v5…10v20) win</div></div>
+<div class="tile"><div class="v">100%</div><div class="k">Scale-extrapolation win</div></div>
+<div class="tile"><div class="v">93%</div><div class="k">vs adaptive RL attackers</div></div>
+<div class="tile"><div class="v">98%</div><div class="k">Hills terrain win</div></div>
+<div class="tile"><div class="v">100%</div><div class="k">Urban terrain win</div></div>
+<div class="tile"><div class="v">100%</div><div class="k">Maze terrain win</div></div>
+<div class="tile"><div class="v">35</div><div class="k">Eval runs on file</div></div></div>
+<h2>Win rate by eval run</h2><div class="barrow" title="model_largeP_urban: 100%"><div class="barlab">model_largeP_urban</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="model_large_maze: 100%"><div class="barlab">model_large_maze</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="model_large_scale: 100%"><div class="barlab">model_large_scale</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="model_large_urban: 100%"><div class="barlab">model_large_urban</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="model_reuseadv_nlm: 100%"><div class="barlab">model_reuseadv_nlm</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="model_stale24: 100%"><div class="barlab">model_stale24</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="model_ko_pip: 100%"><div class="barlab">model_ko_pip</div><div><div class="bar" style="width:99.7%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="model_speed12: 100%"><div class="barlab">model_speed12</div><div><div class="bar" style="width:99.7%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="model_kill2: 99%"><div class="barlab">model_kill2</div><div><div class="bar" style="width:98.6%;background:var(--c1)"></div></div><div class="barval">99%</div></div>
+<div class="barrow" title="model_ko_opportunistic: 99%"><div class="barlab">model_ko_opportunistic</div><div><div class="bar" style="width:98.6%;background:var(--c1)"></div></div><div class="barval">99%</div></div>
+<div class="barrow" title="model_ko_none: 98%"><div class="barlab">model_ko_none</div><div><div class="bar" style="width:98.3%;background:var(--c1)"></div></div><div class="barval">98%</div></div>
+<div class="barrow" title="model_largeP_maze: 98%"><div class="barlab">model_largeP_maze</div><div><div class="bar" style="width:98.3%;background:var(--c1)"></div></div><div class="barval">98%</div></div>
+<div class="barrow" title="model_large_hills: 98%"><div class="barlab">model_large_hills</div><div><div class="bar" style="width:98.2%;background:var(--c1)"></div></div><div class="barval">98%</div></div>
+<div class="barrow" title="model_ko_assignmeta: 98%"><div class="barlab">model_ko_assignmeta</div><div><div class="bar" style="width:97.9%;background:var(--c1)"></div></div><div class="barval">98%</div></div>
+<h2>Terrain generalist — win rate by cell</h2><div class="legend"><span><span class="sw" style="background:var(--c1)"></span>hills</span><span><span class="sw" style="background:var(--c2)"></span>urban</span><span><span class="sw" style="background:var(--c3)"></span>maze</span></div><div class="barrow" title="5v5 direct: 94%"><div class="barlab">5v5 direct</div><div><div class="bar" style="width:93.8%;background:var(--c1)"></div></div><div class="barval">94%</div></div>
+<div class="barrow" title="5v5 saturation: 97%"><div class="barlab">5v5 saturation</div><div><div class="bar" style="width:96.9%;background:var(--c1)"></div></div><div class="barval">97%</div></div>
+<div class="barrow" title="5v5 decoy: 91%"><div class="barlab">5v5 decoy</div><div><div class="bar" style="width:90.6%;background:var(--c1)"></div></div><div class="barval">91%</div></div>
+<div class="barrow" title="10v10 direct: 100%"><div class="barlab">10v10 direct</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="10v10 saturation: 100%"><div class="barlab">10v10 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="10v10 decoy: 100%"><div class="barlab">10v10 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="15v10 direct: 100%"><div class="barlab">15v10 direct</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="15v10 saturation: 100%"><div class="barlab">15v10 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="15v10 decoy: 100%"><div class="barlab">15v10 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="20v20 direct: 100%"><div class="barlab">20v20 direct</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="20v20 saturation: 100%"><div class="barlab">20v20 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c1)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="20v20 decoy: 97%"><div class="barlab">20v20 decoy</div><div><div class="bar" style="width:96.9%;background:var(--c1)"></div></div><div class="barval">97%</div></div>
+<div class="barrow" title="5v5 direct: 100%"><div class="barlab">5v5 direct</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="5v5 saturation: 100%"><div class="barlab">5v5 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="5v5 decoy: 100%"><div class="barlab">5v5 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="10v10 direct: 100%"><div class="barlab">10v10 direct</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="10v10 saturation: 100%"><div class="barlab">10v10 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="10v10 decoy: 100%"><div class="barlab">10v10 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="15v10 direct: 100%"><div class="barlab">15v10 direct</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="15v10 saturation: 100%"><div class="barlab">15v10 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="15v10 decoy: 100%"><div class="barlab">15v10 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="20v20 direct: 100%"><div class="barlab">20v20 direct</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="20v20 saturation: 100%"><div class="barlab">20v20 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="20v20 decoy: 100%"><div class="barlab">20v20 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c2)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="5v5 direct: 100%"><div class="barlab">5v5 direct</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="5v5 saturation: 100%"><div class="barlab">5v5 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="5v5 decoy: 100%"><div class="barlab">5v5 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="10v10 direct: 100%"><div class="barlab">10v10 direct</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="10v10 saturation: 100%"><div class="barlab">10v10 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="10v10 decoy: 100%"><div class="barlab">10v10 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="15v10 direct: 100%"><div class="barlab">15v10 direct</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="15v10 saturation: 100%"><div class="barlab">15v10 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="15v10 decoy: 100%"><div class="barlab">15v10 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="20v20 direct: 100%"><div class="barlab">20v20 direct</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="20v20 saturation: 100%"><div class="barlab">20v20 saturation</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<div class="barrow" title="20v20 decoy: 100%"><div class="barlab">20v20 decoy</div><div><div class="bar" style="width:100.0%;background:var(--c3)"></div></div><div class="barval">100%</div></div>
+<h2>All eval runs</h2><table><tr><th>eval run (tag)</th><th>win</th><th>leakers/ep</th><th>bad-death</th><th>XR</th><th>cells</th></tr><tr><td>model_largeP_urban</td><td class="num">100%</td><td class="num">0.00</td><td class="num">13.3%</td><td class="num">5.85</td><td class="num">9</td></tr><tr><td>model_large_maze</td><td class="num">100%</td><td class="num">0.00</td><td class="num">25.2%</td><td class="num">0.92</td><td class="num">12</td></tr><tr><td>model_large_scale</td><td class="num">100%</td><td class="num">0.00</td><td class="num">0.5%</td><td class="num">99.00</td><td class="num">8</td></tr><tr><td>model_large_urban</td><td class="num">100%</td><td class="num">0.00</td><td class="num">22.7%</td><td class="num">2.94</td><td class="num">12</td></tr><tr><td>model_reuseadv_nlm</td><td class="num">100%</td><td class="num">0.00</td><td class="num">1.1%</td><td class="num">99.00</td><td class="num">6</td></tr><tr><td>model_stale24</td><td class="num">100%</td><td class="num">0.00</td><td class="num">0.0%</td><td class="num">1.00</td><td class="num">4</td></tr><tr><td>model_ko_pip</td><td class="num">100%</td><td class="num">0.00</td><td class="num">15.0%</td><td class="num">6.34</td><td class="num">6</td></tr><tr><td>model_speed12</td><td class="num">100%</td><td class="num">0.00</td><td class="num">0.0%</td><td class="num">1.00</td><td class="num">6</td></tr><tr><td>model_kill2</td><td class="num">99%</td><td class="num">0.01</td><td class="num">3.6%</td><td class="num">0.93</td><td class="num">6</td></tr><tr><td>model_ko_opportunistic</td><td class="num">99%</td><td class="num">0.02</td><td class="num">18.2%</td><td class="num">4.77</td><td class="num">6</td></tr><tr><td>model_ko_none</td><td class="num">98%</td><td class="num">0.02</td><td class="num">16.0%</td><td class="num">5.50</td><td class="num">6</td></tr><tr><td>model_largeP_maze</td><td class="num">98%</td><td class="num">0.02</td><td class="num">29.1%</td><td class="num">2.21</td><td class="num">9</td></tr><tr><td>model_large_hills</td><td class="num">98%</td><td class="num">0.03</td><td class="num">22.5%</td><td class="num">3.70</td><td class="num">12</td></tr><tr><td>model_ko_assignmeta</td><td class="num">98%</td><td class="num">0.02</td><td class="num">5.9%</td><td class="num">15.23</td><td class="num">6</td></tr><tr><td>model_ko_teammates</td><td class="num">98%</td><td class="num">0.04</td><td class="num">26.0%</td><td class="num">3.31</td><td class="num">6</td></tr><tr><td>model_reuse_nlm</td><td class="num">96%</td><td class="num">0.04</td><td class="num">0.0%</td><td class="num">99.00</td><td class="num">10</td></tr><tr><td>model_reuseadv_vs_ar</td><td class="num">93%</td><td class="num">0.08</td><td class="num">20.5%</td><td class="num">4.11</td><td class="num">5</td></tr><tr><td>model_sensor150</td><td class="num">92%</td><td class="num">0.08</td><td class="num">0.0%</td><td class="num">1.00</td><td class="num">6</td></tr><tr><td>model_reuse_realism</td><td class="num">89%</td><td class="num">0.32</td><td class="num">19.1%</td><td class="num">4.25</td><td class="num">114</td></tr><tr><td>model_realism</td><td class="num">76%</td><td class="num">0.81</td><td class="num">2.5%</td><td class="num">0.92</td><td class="num">114</td></tr><tr><td>model_patch_realism</td><td class="num">76%</td><td class="num">0.82</td><td class="num">2.5%</td><td class="num">0.92</td><td class="num">114</td></tr><tr><td>model_b2_scripted</td><td class="num">75%</td><td class="num">0.83</td><td class="num">2.3%</td><td class="num">0.92</td><td class="num">114</td></tr><tr><td>model_advdef_scripted</td><td class="num">75%</td><td class="num">0.84</td><td class="num">2.9%</td><td class="num">0.91</td><td class="num">114</td></tr><tr><td>baseline_scale</td><td class="num">75%</td><td class="num">2.50</td><td class="num">0.0%</td><td class="num">1.00</td><td class="num">8</td></tr><tr><td>model_scale</td><td class="num">75%</td><td class="num">2.50</td><td class="num">0.0%</td><td class="num">1.00</td><td class="num">8</td></tr><tr><td>model_b2_vs_a2</td><td class="num">73%</td><td class="num">0.38</td><td class="num">4.3%</td><td class="num">0.63</td><td class="num">5</td></tr><tr><td>model_scratch3_realism</td><td class="num">72%</td><td class="num">0.96</td><td class="num">14.7%</td><td class="num">0.71</td><td class="num">114</td></tr><tr><td>model_sensor75</td><td class="num">70%</td><td class="num">0.38</td><td class="num">0.0%</td><td class="num">1.00</td><td class="num">6</td></tr><tr><td>baseline_realism</td><td class="num">69%</td><td class="num">1.03</td><td class="num">17.4%</td><td class="num">0.68</td><td class="num">114</td></tr><tr><td>baseline_plain</td><td class="num">68%</td><td class="num">1.29</td><td class="num">0.0%</td><td class="num">1.00</td><td class="num">114</td></tr><tr><td>model_plain</td><td class="num">68%</td><td class="num">1.29</td><td class="num">0.0%</td><td class="num">1.00</td><td class="num">114</td></tr><tr><td>model_b2_vs_a3</td><td class="num">67%</td><td class="num">0.50</td><td class="num">5.1%</td><td class="num">0.49</td><td class="num">5</td></tr><tr><td>model_b2_vs_a1</td><td class="num">55%</td><td class="num">0.70</td><td class="num">5.5%</td><td class="num">0.88</td><td class="num">5</td></tr><tr><td>model_advdef_vs_rl</td><td class="num">24%</td><td class="num">1.78</td><td class="num">19.6%</td><td class="num">0.35</td><td class="num">5</td></tr><tr><td>model_patch_vs_rl</td><td class="num">1%</td><td class="num">4.19</td><td class="num">94.4%</td><td class="num">0.04</td><td class="num">5</td></tr></table>
+<h2>Episode replays</h2><div class="gifs"><figure><img loading="lazy" src="aegis_maze_routed_10v12.gif" alt="maze routed 10v12"><figcaption>maze routed 10v12</figcaption></figure><figure><img loading="lazy" src="aegis_reuse_50v40_flanking_none.gif" alt="reuse 50v40 flanking none"><figcaption>reuse 50v40 flanking none</figcaption></figure><figure><img loading="lazy" src="aegis_reuse_20v20_waves.gif" alt="reuse 20v20 waves"><figcaption>reuse 20v20 waves</figcaption></figure><figure><img loading="lazy" src="aegis_reuse_10v15_decoy_urban.gif" alt="reuse 10v15 decoy urban"><figcaption>reuse 10v15 decoy urban</figcaption></figure><figure><img loading="lazy" src="aegis_reuse_8v8_saturation_maze.gif" alt="reuse 8v8 saturation maze"><figcaption>reuse 8v8 saturation maze</figcaption></figure><figure><img loading="lazy" src="aegis_reuse_10v20_flanking.gif" alt="reuse 10v20 flanking"><figcaption>reuse 10v20 flanking</figcaption></figure><figure><img loading="lazy" src="aegis_kam_7v5_mixed.gif" alt="kam 7v5 mixed"><figcaption>kam 7v5 mixed</figcaption></figure><figure><img loading="lazy" src="aegis_reuse_5v8_mixed.gif" alt="reuse 5v8 mixed"><figcaption>reuse 5v8 mixed</figcaption></figure></div>
+<h2>Experiment reports</h2><details><summary>overnight_20260827</summary><pre># Overnight 2026-08-27 — Large Swarms, Labyrinths, Coordinated Attackers
+
+Queue ran 02:55–03:34 (one OOM restart at 03:02, resumed from checkpoint, worlds
+512→384). New champion: **`models/aegis_large_stage3_realism_best/best_model.zip`**
+— a kamikaze=False terrain-generalist trained N∈[4,20] vs M∈[1,20] on randomized
+hills/urban/maze against direct/flanking/jink/**saturation/waves/decoy** raids.
+
+## Training (q1, 90M steps warm-started from the reuse champion)
+Gate: **win 0.96** (256 episodes, target 0.60), 6.2 intercepts/episode, first
+kill 2.6 s. Terrain deaths fell 0.24 → 0.05 during training as it learned the
+labyrinths.
+
+## Adversarial check (q2): NO GAP on the first pass
+Fresh RL attackers (40M steps, terrain worlds): **true breach 0.012** (threshold
+0.08) → &quot;no gap&quot; verdict, Round B unnecessary. The adversarial hardening from the
+reuse-champion lineage SURVIVED the terrain curriculum — robustness now transfers
+through warm-starts instead of needing a fresh co-training loop per model.
+(Stall-timeouts 28% are no longer rewarded: attacker checkpoints select on true
+penetration since this session.)
+
+## Terrain grids (q3: 5v5→20v20 × direct/saturation/decoy, full realism)
+| Terrain | Win | Leakers/ep | Notes |
+|---|---|---|---|
+| Hills | 0.98 | 0.03 | 20v20 saturation raid: 100% |
+| **Urban** (tower grid) | **1.00** | 0.00 | all cells perfect |
+| **Maze** (3-ring labyrinth) | **1.00** | 0.00 | all cells perfect |
+
+Known cost: ~23% terrain attrition among defenders in obstacle worlds (open-field
+losses are 0.2–1.7%) — the reuse-line shaping issue, unchanged priority.
+
+## Scale (q3, open field)
+**40v30, 50v40, 20v30, and 10v20 (outnumbered 2:1): ALL 100% win, zero leakers**,
+defender losses ≤0.6% at the biggest sizes. 90 drones in one battle, first kill
+in ~2.5 s.
+
+## New replays (dashboard gallery)
+`aegis_reuse_8v8_saturation_maze.gif` · `aegis_reuse_10v15_decoy_urban.gif` ·
+`aegis_reuse_20v20_waves.gif` · `aegis_reuse_50v40_flanking_none.gif`
+
+## Next
+1. Terrain-attrition shaping (per-kill survival bonus) — the one soft spot left.
+2. Attacker route-planning (A*/corridor waypoints) so scripted raids use maze
+   gates instead of crude repulsion (fewer wall self-kills → harder raids).
+3. Sim-to-real: sensor budget study on the large model; obs-knockout ablations.
+
+---
+
+# Round 2 (03:43–03:58) — attrition pricing, routed raids, sensor knockouts
+
+## Attrition A/B (r_bad_death −60, r_safety −0.10) → new champion `aegis_largeP`
+Clean comparison (urban, unaffected by the routing change): attrition **22.7% →
+13.3%** at identical 1.00 win. Training-time trajectory: 0.24 → **0.047** on
+mixed-terrain evals vs routed raids at win 0.96. The maze grid A/B is
+confounded (base was measured before gate-routing shipped; largeP faced the
+harder routed raids and still won 0.98). Verdict: adopt largeP as champion —
+`models/aegis_largeP_stage3_realism_best/best_model.zip`.
+
+## Routed raids
+Scripted attackers now thread maze gates (see `aegis_maze_routed_10v12.gif`) —
+deeper penetrations, more contested inner-ring fights; the defense holds
+0.98–1.00 regardless.
+
+## Sensor knockouts (base large model; which obs the CrazyFlie build needs)
+| Zeroed block | Win | Bad-death | Read |
+|---|---|---|---|
+| none (control) | 0.98 | 16.0% | — |
+| PIP hint | 1.00 | 15.0% | **not load-bearing — skip on hardware** |
+| opportunistic channel | 0.99 | 18.2% | near-free — optional sensor |
+| teammate slots | 0.98 | **26.0%** | wins hold, attrition +10pts — teammate sensing is a survivability aid |
+| assignment meta | 0.98 | 5.9% (t1st +0.8s) | policy flies conservative without roles — slower but safer |
+
+**Minimal viable sensor suite: own state + assigned-target track + terrain +
+boundary.** Wins are insensitive to everything else; extras trade attrition vs
+speed.
+</pre></details><details><summary>overnight_20260819</summary><pre># Overnight AEGIS Experiments — Results (2026-08-19, 02:49–04:01)
+
+All 14 queue steps completed, exit 0. Raw CSVs: `models/eval_output/nvm_grid_*.csv`.
+Models: `models/aegis_{patch,reuse,scratch3}_stage*`. Rationale: `docs/REWARDS.md`.
+
+## q1 — Scale extrapolation (trained on ≤8v8, zero extra training)
+| Cell | Win | Leakers | Notes |
+|---|---|---|---|
+| 20v15 | 100% | 0 | first kill 1.7s |
+| 30v20 | 100% | 0 | |
+| **40v30** | **100%** | 0 | 5× the trained defender count |
+| 10v20 | 0% | 10.0 | exact kamikaze identity (10 kills then overrun) |
+
+**Verdict: size-invariance confirmed.** The ego-centric obs + allocator generalize
+essentially without limit upward; N&lt;M remains capped by kamikaze math (see q3).
+
+## q2 — Reward patch A/B (bad_death −30, unowned −5, safety −0.05, danger 90m)
+Training dynamics clearly better: stage-2 gate win 0.84 vs 0.71, stage-3 gate 0.85
+vs 0.81, in-training bad deaths 4–6× lower (0.03–0.04 vs 0.10–0.18). **Final grid
+outcomes: statistically identical** (win 0.76/0.76, bad 2.5%/2.5%) — the original&#x27;s
+breach-rate checkpoint selection had already picked its cleanest model. The patch&#x27;s
+value is soundness (closes the dead-owner suicide exploit) + faster convergence, not
+end metrics — exactly the ≤1pt movement the audit predicted. **Adopt as default.**
+
+## q3 — Reusable interceptor (kamikaze=False + 2s rearm) ⭐ HEADLINE
+| Metric (realism grid) | Kamikaze | Reusable |
+|---|---|---|
+| Overall win | 0.76 | **0.89** |
+| N&lt;M win | 0.24 | **0.68** |
+| Exchange ratio (N&lt;M) | 0.98 (ceiling 1.0) | **8.97** |
+| Bad-death rate | 2.5% | 19.1% ⚠ |
+
+Focus cells (plain): **3v5, 5v8, 7v10, 10v20 all 100% win / 0 leakers; 3v8 → 81%**
+(was 0% — structurally impossible — under kamikaze).
+Trade-off: defenders now survive kills, fly ~5× more sorties, and accumulate ~19%
+terrain losses (a −30 death amortizes over multiple +30 kills, so risk economics
+shifted). Next iteration if attrition matters: raise safety shaping further or add a
+small survival bonus per kill. If the real platform is a gun/net interceptor, this
+mode should be the primary model.
+
+## q4 — Stress battery (kamikaze best model)
+| Stressor | Win | Verdict |
+|---|---|---|
+| Kill 2 defenders at t=10s (realism, culled) | 0.99 | self-healing holds; +1pt breach only |
+| Sensor 300→150 m | 0.92 | mild degradation |
+| Sensor 300→75 m | 0.70 | **sensing is the binding constraint** — key sim-to-real datum |
+| Attacker speed ×1.2 (60 = parity) | 1.00 | no collapse |
+| Allocation every 2 s + culls | 1.00 | allocator cadence is not critical |
+
+## q5 — Curriculum necessity (stage-3-only from scratch, 60M)
+scratch3: win 0.72, bad 14.7%, XR 0.71 vs curriculum: 0.76, 2.5%, 0.92.
+Mid-training it was far worse (train win 0.17, bad 72% at 30M). **The 4-stage
+curriculum earns its keep** — cold-starting full realism converges slower and to a
+visibly sloppier policy (6× the terrain losses).
+
+## Recommended next steps
+1. Make the reward patch the default constants in `AegisConfig` (done in code? no —
+   constants unchanged; flip when adopting).
+2. Decide the platform story: kamikaze (FPV ramming) vs reusable (gun/net). If both,
+   train a mixed fleet or condition the policy on a mode flag.
+3. Phase-3 adversarial co-training (RL attackers vs frozen defender, mixture pool).
+4. For CrazyFlie sim-to-real: budget sensors for ≥150 m-equivalent detection scaled
+   to lab arena; obs-knockout ablations still pending.
+</pre></details><details><summary>adv_pop_20260821</summary><pre># Adversarial Population Loop (r2/r3) + Reuse Track — Results (2026-08-21)
+
+Queue: 03:52–04:40 + champion evals. CSVs: `models/eval_output/nvm_grid_model_{b2_vs_a1,b2_vs_a2,b2_vs_a3,b2_scripted,reuseadv_vs_ar,reuseadv_nlm}.csv`.
+
+## Population-loop trajectory (kamikaze track) — CONVERGED in 2 rounds
+| Round | Fresh attackers found (A-gate breach) | Defender retrain (B-gate win vs mixture) |
+|---|---|---|
+| 1 (2026-08-20) | **0.75** — kamikaze-baiting into terrain | 0.69 |
+| 2 | **0.46** — mostly stalling (82% timeouts) | **0.80** |
+| 3 | **0.094** → &quot;no gap&quot; verdict, loop stops | (unnecessary by design) |
+
+A full 40M-step attacker training run can no longer meaningfully exploit the B2
+defender. **Champion: `models/aegis_adv_defender_r2_best/best_model.zip`.**
+
+## Champion B2 vs every attacker generation (5 cells, realism)
+| Opponent | Win | Leakers | Defender bad-deaths |
+|---|---|---|---|
+| A1 (baiter) — old defender scored 0.01/4.19/94% | **0.55** | 0.70 | 5.5% |
+| A2 (staller) | 0.73 | 0.38 | 4.3% |
+| A3 (converged gen) | 0.67 | 0.50 | 5.1% |
+| Scripted full grid (non-regression) | **0.75** | 0.83 | 2.3% |
+
+The baiting exploit is defused (bad-deaths vs A1: 94% → 5.5%), robustness holds
+across generations it never trained against directly, and two additional
+co-training rounds cost **zero** scripted performance (0.75 vs 0.76).
+
+## Reuse (kamikaze=False) track — ⭐ best overall model after ONE round
+Fresh attackers found a 0.30 gap vs the frozen reuse defender — not baiting per
+se, but exploiting its old terrain sloppiness (0.42 defender crash rate while
+chasing). One co-training round:
+
+- **0.93 win / 0.08 leakers vs its adaptive RL attacker** (kamikaze track needed
+  two rounds to reach 0.55–0.73 vs generations)
+- **N&lt;M superpower fully retained: 3v5, 5v8, 10v20 all 100% win, zero leakers**
+- Known cost unchanged: ~20% terrain attrition (survivors fly more risk-miles)
+
+**`models/aegis_adv_defender_reuse_best/best_model.zip` is now the strongest
+model in the project** — adversarially hardened AND unbounded exchange ratio.
+The reusable-interceptor hypothesis held: with nothing to gain from trading, the
+baiting exploit class never re-emerged; the residual attrition is a shaping
+problem (next lever: per-kill survival bonus or stronger safety term), not a
+strategic one.
+
+## Refinements noted for future rounds
+1. Attacker best-checkpoint criterion counts stranded-at-timeout as success;
+   switch to true-breach-rate so stall-heavy checkpoints aren&#x27;t selected.
+2. B2-vs-A1 (0.55) suggests one more kamikaze-track round vs a baiter-enriched
+   pool would help — only if the kamikaze platform stays relevant.
+3. Reuse track: run its own population loop (A2r/B2r) + attrition shaping.
+</pre></details><details><summary>adv_20260820</summary><pre># Phase-3 Adversarial Co-Training — Round 1 Results (2026-08-20)
+
+Driver: `train/train_aegis_adv.py`. Round A: RL attackers (evade mode, 41-dim ego
+obs) vs frozen `aegis_patch` defender, 40M steps. Round B: defender retrained 60M
+steps vs mixture (mixed/flanking/jink/rl). Evals: 5 cells (3v5,5v3,5v5,8v5,8v8),
+realism, 48 episodes each. CSVs: `models/eval_output/nvm_grid_model_{patch_vs_rl,advdef_vs_rl,advdef_scripted}.csv`.
+
+## (a) Learned attackers DEMOLISH the scripted-era champion
+| Old (patch) defender vs | Win | Leakers | Defender bad-deaths |
+|---|---|---|---|
+| scripted attackers (same cells) | 0.78 | 0.33 | 2.2% |
+| **RL attackers** | **0.01** | **4.19** | **94.4%** |
+
+The attackers&#x27; discovered exploit is **kamikaze-baiting**: lure pursuing defenders
+into hills/ground (94% of defenders die to terrain, not trades), then cruise in.
+Attack runs take 22s. A defender that was untouchable by scripted opponents is
+essentially disarmed by an adaptive one — this is why Phase 3 exists.
+
+## (b) One co-training round closes much — not all — of the gap
+| Co-trained defender vs RL attackers | Old | Co-trained |
+|---|---|---|
+| Win | 0.01 | **0.24** |
+| Leakers/episode | 4.19 | **1.78** |
+| Bad-death rate | 94.4% | **19.6%** |
+| Episode length | 22s (rout) | 55s (contested full-length fights) |
+
+The co-trained defender stopped taking the bait (bad deaths −75 pts), forces
+full-length engagements, and halves the leakage. Parity vs a fully adaptive
+attacker needs more self-play iterations — expected; that&#x27;s the nature of the loop.
+
+## (c) Non-regression vs scripted: clean
+Full 114-cell realism grid: co-trained **0.75** vs old 0.76 win (within noise),
+bad deaths 2.9% vs 2.5%. **The mixture worked — no catastrophic forgetting.**
+
+## Notes
+- Attacker stalling: mid-training the attackers also learned to loiter out of reach
+  (timeouts ~50%); the stranded-as-leaker metric counts this as attacker success,
+  but from a mission standpoint a stalling attacker is defeated. The Round-B
+  defender ignores the bait (timeouts 0 in mixture evals).
+- Round-B gate on seed 99 read 0.69 vs the 0.70 target (mixture sampling + stall
+  accounting); grid evals above are the meaningful numbers.
+
+## Next iterations (standard population loop)
+1. Round A2: train fresh attackers vs the co-trained defender (aegis_adv_defender).
+2. Round B2: retrain defender vs pool {scripted, A1, A2} — grow the mixture.
+3. Try co-training the **reuse (kamikaze=False)** defender: the baiting exploit
+   preys on kamikaze economics (a defender death is worth an attacker&#x27;s while);
+   a reusable interceptor is structurally less baitable.
+4. Consider attacker-side stall penalty (time reward) so attacker training pressure
+   stays on penetration, not clock-milking.
+
+Models: `models/aegis_adv_attacker_best/`, `models/aegis_adv_defender_best/`.
+</pre></details>
+<h2>Recent commits</h2><ul class="commits"><li><b>32a074a</b> DD-16: Maze gate route-planning for scripted raids + obs-knockout eval support</li><li><b>7a220ee</b> DD-16: Overnight results — 20v20 terrain-generalist: maze/urban 1.00, 50v40 100%, adversarially robust first-pass</li><li><b>7781880</b> DD-16: Results dashboard — python -m eval.dashboard scans all runs into one HTML UI</li><li><b>38bc47b</b> DD-16: Terrain system (urban/maze labyrinths), coordinated attacker strategies, large-swarm prep</li><li><b>4ebe93a</b> DD-16: AEGIS episode GIF renderer (top-down tactical view)</li><li><b>0110979</b> DD-16: Population loop converged — reuse-track champion is the strongest model</li><li><b>f82c699</b> DD-16: Population-loop support — attacker pools, stall penalty, patch defaults, reuse track</li><li><b>2849e86</b> DD-16: Phase-3 round-1 results — kamikaze-baiting exposed, co-training recovers with zero regression</li><li><b>54e4771</b> DD-16: Phase-3 adversarial co-training — evade mode, rl attacker strategy, round A/B driver</li><li><b>7345c7d</b> DD-16: Overnight eval artifacts (NvM grid CSVs/JSONs/heatmaps)</li><li><b>569b7f5</b> DD-16: Overnight experiment results — kamikaze=False removes N&lt;M ceiling</li><li><b>c1f45a6</b> DD-16: Reward audit fixes + kamikaze=False mode + overnight experiment queue</li><li><b>f1b1134</b> DD-16: Overnight experiment scaffold</li><li><b>07e8afc</b> DD-15: AEGIS — allocator-based swarm defense, variable NvM, self-healing</li></ul>
+</body></html>

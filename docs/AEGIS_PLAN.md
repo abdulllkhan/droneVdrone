@@ -320,6 +320,62 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**ROUND 2 (2026-08-27 03:58): CHAMPION = `aegis_largeP_stage3_realism_best`** —
+attrition-priced retrain (bad_death −60, safety −0.10): urban attrition 22.7%→
+**13.3%** at 1.00 win, training-time mixed-terrain attrition →0.047. Scripted
+raids now **route through maze gates** (aegis_maze_routed_10v12.gif). Sensor
+knockouts: PIP + opportunistic channels are NOT load-bearing (win 1.00/0.99
+without them) — **minimal CrazyFlie sensor suite = own state + assigned-target
+track + terrain + boundary**; teammate sensing is a survivability aid (+10pts
+attrition without it). Full table in experiments/overnight_20260827/results.md.
+
+**LARGE SWARMS + TERRAIN + COORDINATED ATTACKERS (2026-08-27)** — see
+`experiments/overnight_20260827/results.md`. New champion
+**`aegis_large_stage3_realism_best`**: kamikaze=False generalist trained
+N∈[4,20]×M∈[1,20] on randomized hills/**urban**/**maze** terrain (box-obstacle
+system, obs contract unchanged) vs new **saturation/waves/decoy** coordinated
+raids. Results: urban+maze grids **1.00 win** to 20v20; hills 0.98; open-field
+scale **50v40 = 100% win, 0 leakers, ≤0.6% losses**; adversarial check found
+**no gap on the first pass** (true breach 0.012 — hardening transfers through
+warm-starts). Attacker checkpoints now select on TRUE breach (stalls excluded).
+**Dashboard**: `python -m eval.dashboard` → `models/eval_output/dashboard.html`
+(+ artifact "AEGIS Flight Log"). Soft spot: ~23% defender terrain attrition in
+obstacle worlds (open field ≤1.7%) — next lever per-kill survival bonus; also
+attacker route-planning through maze gates.
+
+**PHASE-3 POPULATION LOOP + REUSE TRACK (2026-08-21)** — see
+`experiments/adv_pop_20260821/results.md`. The loop CONVERGED in 2 rounds:
+fresh-attacker exploit sizes 0.75 → 0.46 → 0.094 ("no gap" → stop). Kamikaze
+champion `aegis_adv_defender_r2_best`: 0.55–0.73 win vs every attacker
+generation (old defender: 0.01 vs gen-1), baiting defused (bad-deaths 94%→5.5%),
+zero scripted regression (0.75). **Best overall model:
+`aegis_adv_defender_reuse_best`** (kamikaze=False track, ONE round): 0.93 win vs
+its adaptive attacker AND retains 100% N<M wins (3v5/5v8/10v20) — the
+reusable-interceptor hypothesis held; residual cost is ~20% terrain attrition
+(shaping problem, not strategic). Audit-patch constants are now AegisConfig
+defaults; evade mode has an ar_stall=-10 penalty; 'rl' strategy supports
+attacker POOLS (attacker_model_paths).
+
+**PHASE-3 ADVERSARIAL CO-TRAINING, ROUND 1 (2026-08-20)** — see
+`experiments/adv_20260820/results.md`. Env gained `mode="evade"` (RL attackers,
+41-dim ego obs) and an `'rl'` attacker strategy (frozen model) for mixture
+retraining; driver `train/train_aegis_adv.py`. Findings: learned attackers
+crush the scripted-era champion (win 0.78 → **0.01**, 94% defender bad-deaths via
+**kamikaze-baiting** into terrain); one co-training round recovers win 0.01 →
+0.24, bad-deaths 94% → 20%, leakers 4.2 → 1.8, with **zero scripted regression**
+(0.75 vs 0.76 full grid — the mixture prevented forgetting). Next: iterate the
+population loop (A2/B2), and co-train the kamikaze=False defender (structurally
+less baitable). Models: `models/aegis_adv_{attacker,defender}_best/`.
+
+**OVERNIGHT EXPERIMENTS (2026-08-19)** — see `docs/REWARDS.md` +
+`experiments/overnight_20260819/results.md`. Highlights: scale extrapolation
+perfect to **40v30** (5× trained size); reward-audit patch adopted (cleaner
+training, exploit closed); **kamikaze=False reusable-interceptor mode added to
+the env** and it removes the N<M ceiling (10v20: 100% win, XR ~9); self-healing
+survives 2-defender kill injection at 0.99 win; sensor range is the binding
+constraint (0.70 win at 75 m); curriculum confirmed necessary. New models:
+`models/aegis_{patch,reuse,scratch3}_stage3_realism_best/`.
+
 **Implementation deltas vs spec** (decided during build):
 - Allocator uses **scipy Hungarian** per world as primary (greedy had a 13% mean
   optimality gap on random matrices; Hungarian is µs-cheap at ≤8×8). Greedy remains

@@ -30,7 +30,7 @@ def build_cells(spec):
     return cells + HOLDOUT
 
 
-def make_env(n, m, strategy, realism, culled, seed=4242):
+def make_env(n, m, strategy, realism, culled, seed=4242, overrides=None):
     from envs.aegis_env import AegisSwarmEnv, AegisConfig
     kw = dict(n_max=n, m_max=m, fixed_nm=(n, m), n_range=(n, n), m_range=(m, m),
               attacker_strategies=(strategy,), seed=seed,
@@ -39,6 +39,7 @@ def make_env(n, m, strategy, realism, culled, seed=4242):
         kw.update(num_obstacles=5, wind_enabled=True, wind_max_force=0.5,
                   wind_gust_prob=0.01, wind_gust_force=1.5, obs_noise_std=0.02,
                   sensor_range=300.0)
+    kw.update(overrides or {})
     return AegisSwarmEnv(num_worlds=16, config=AegisConfig(**kw))
 
 
@@ -59,12 +60,19 @@ def baseline_actions(env):
     return (d / norm).reshape(env.n_envs, 3).astype(np.float32)
 
 
-def run_cell(model, n, m, strategy, episodes, realism, culled):
-    env = make_env(n, m, strategy, realism, culled)
+KNOCKOUT_SLICES = {"pip": (22, 25), "opportunistic": (48, 56),
+                   "teammates": (29, 37), "assignmeta": (26, 29)}
+
+
+def run_cell(model, n, m, strategy, episodes, realism, culled, overrides=None,
+             knockout=()):
+    env = make_env(n, m, strategy, realism, culled, overrides=overrides)
     env.pop_outcomes()
     obs = env.reset()
     outs, guard = [], 0
     while len(outs) < episodes and guard < 100_000:
+        for lo, hi in knockout:
+            obs[:, lo:hi] = 0.0
         if model is None:
             acts = baseline_actions(env)
         else:
@@ -129,7 +137,22 @@ def main():
     p.add_argument("--realism", action="store_true")
     p.add_argument("--culled", action="store_true")
     p.add_argument("--out", type=str, default="models/eval_output")
+    p.add_argument("--set", action="append", default=[], metavar="KEY=VAL",
+                   help="AegisConfig override for every cell (repeatable)")
+    p.add_argument("--knockout", type=str, default="",
+                   help="zero obs blocks at inference: comma list of "
+                        "pip,opportunistic,teammates,assignmeta")
+    p.add_argument("--tag", type=str, default="",
+                   help="override output tag (default: model stem or 'baseline')")
     args = p.parse_args()
+    import ast
+    overrides = {}
+    for pair in args.set:
+        k, v = pair.split("=", 1)
+        try:
+            overrides[k] = ast.literal_eval(v)
+        except (ValueError, SyntaxError):
+            overrides[k] = v
 
     import warp as wp
     wp.init()
@@ -144,6 +167,8 @@ def main():
         tag = os.path.splitext(os.path.basename(args.model))[0]
         if tag == "best_model":
             tag = os.path.basename(os.path.dirname(args.model))
+    if args.tag:
+        tag = args.tag
 
     cells = build_cells(args.cells)
     strategies = args.strategies.split(",")
@@ -152,7 +177,10 @@ def main():
     rows = []
     for (n, m) in cells:
         for s in strategies:
-            r = run_cell(model, n, m, s, args.episodes, args.realism, args.culled)
+            r = run_cell(model, n, m, s, args.episodes, args.realism, args.culled,
+                         overrides=overrides,
+                         knockout=[KNOCKOUT_SLICES[k] for k in
+                                   args.knockout.split(",") if k])
             rows.append(r)
             extra = f" xr={r['exchange_ratio']:.2f}" if n < m else ""
             print(f"  {n}v{m} [{s:9s}] win={r['win_rate']:.0%} "

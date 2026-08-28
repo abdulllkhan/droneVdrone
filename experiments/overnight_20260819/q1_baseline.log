@@ -1,0 +1,24 @@
+pybullet build time: Mar 22 2026 22:06:37
+/home/abdulllkhan/Documents/droneVdrone/venv/lib/python3.12/site-packages/stable_baselines3/common/vec_env/base_vec_env.py:78: UserWarning: The `render_mode` attribute is not defined in your environment. It will be set to None.
+  warnings.warn("The `render_mode` attribute is not defined in your environment. It will be set to None.")
+Warp 1.12.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.0
+   Devices:
+     "cpu"      : "aarch64"
+     "cuda:0"   : "NVIDIA GB10" (122 GiB, sm_121, mempool enabled)
+   Kernel cache:
+     /home/abdulllkhan/.cache/warp/1.12.0
+Module validate_and_correct_inertia_kernel_8fd4dd1e 8fd4dd1 load on device 'cuda:0' took 0.67 ms  (cached)
+Module envs.aegis_env dbac9b8 load on device 'cuda:0' took 0.44 ms  (cached)
+Module newton._src.solvers.semi_implicit.kernels_body 51a0ce7 load on device 'cuda:0' took 1.82 ms  (cached)
+Module newton._src.solvers.solver 2c8892b load on device 'cuda:0' took 0.45 ms  (cached)
+  20v15 [direct   ] win=100% breach=0.000 leakers=0.00 bad=0.00%
+  20v15 [flanking ] win=100% breach=0.000 leakers=0.00 bad=0.00%
+  30v20 [direct   ] win=100% breach=0.000 leakers=0.00 bad=0.00%
+  30v20 [flanking ] win=100% breach=0.000 leakers=0.00 bad=0.00%
+  10v20 [direct   ] win=0% breach=0.500 leakers=10.00 xr=1.00 bad=0.00%
+  10v20 [flanking ] win=0% breach=0.500 leakers=10.00 xr=1.00 bad=0.00%
+  40v30 [direct   ] win=100% breach=0.000 leakers=0.00 bad=0.00%
+  40v30 [flanking ] win=100% breach=0.000 leakers=0.00 bad=0.00%
+
+Wrote models/eval_output/nvm_grid_baseline_scale.csv (+ .json, heatmap PNG)
