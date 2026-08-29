@@ -320,6 +320,15 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**OOM FIXED — FULL 512 WORLDS RESTORED (2026-08-29, DD-17)** — see
+`experiments/oomfix_20260829/results.md`. The recurring exit-137 was GPU-buffer
+allocation churn (fresh wp.array every step/reset), not RAM. Fix (commit
+29a874d): preallocate + `.assign()` in-place, bit-identical (21/21 tests). The
+512-world/n_max=20 config that died 4× now runs clean (RAM flat ~12 GB, gate
+win 0.97; bonus champion aegis_oomval: maze/scale 1.00 incl. 50v40). **The
+≤256-world cap is LIFTED** — full 512 worlds (~2× parallelism) available for all
+future large runs.
+
 **CONVOY ADVERSARIAL VERIFICATION (2026-08-29, DD-17)** — see
 `experiments/convoyadv_20260829/results.md`. Learned attackers vs the frozen
 moving-target escort: **no gap** (true_breach 0.077 < 0.08; grid 0.89 win / 0.016
