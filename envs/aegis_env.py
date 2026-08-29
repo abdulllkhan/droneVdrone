@@ -287,6 +287,9 @@ class AegisSwarmEnv(VecEnv):
         self.state_1 = self.model.state()
         self.solver = nt.solvers.SolverSemiImplicit(self.model)
 
+        # Preallocated GPU buffers, updated in-place via .assign() — reallocating
+        # wp.array() every step/reset spiked the unified-memory pool (exit-137
+        # transient OOMs at high world counts).
         K = num_worlds * self._num_drones
         self._vel_np = np.zeros((K, 3), dtype=np.float32)
         self.drone_vel = wp.zeros(K, dtype=wp.vec3, device=self.device)
@@ -295,6 +298,8 @@ class AegisSwarmEnv(VecEnv):
         self._wind_np = np.zeros((num_worlds, 3), dtype=np.float32)
         self.wind_wp = wp.array(self._wind_np, dtype=wp.vec3, device=self.device)
         self._init_pos_np = np.zeros((K, 3), dtype=np.float32)
+        self._init_wp = wp.zeros(K, dtype=wp.vec3, device=self.device)
+        self._mask_wp = wp.zeros(num_worlds, dtype=int, device=self.device)
 
         W, N, M = num_worlds, self.n_max, self.m_max
         # --- per-world episode state ---
@@ -603,16 +608,16 @@ class AegisSwarmEnv(VecEnv):
 
     def _upload_resets(self, mask):
         """Push spawn positions/masses/wind for masked worlds to the GPU."""
-        mask_wp = wp.array(mask.astype(np.int32), dtype=int, device=self.device)
-        init_wp = wp.array(self._init_pos_np, dtype=wp.vec3, device=self.device)
+        self._mask_wp.assign(mask.astype(np.int32))
+        self._init_wp.assign(self._init_pos_np)
         wp.launch(
             aegis_reset_kernel,
             dim=self.num_worlds * self._num_drones,
-            inputs=(self.state_0.body_q, self.state_0.body_qd, init_wp, mask_wp,
-                    self._num_drones),
+            inputs=(self.state_0.body_q, self.state_0.body_qd,
+                    self._init_wp, self._mask_wp, self._num_drones),
             device=self.device,
         )
-        self.mass_wp = wp.array(self._mass_np, dtype=float, device=self.device)
+        self.mass_wp.assign(self._mass_np)
         wp.synchronize()
         # refresh CPU mirrors for the reset worlds
         idx = np.nonzero(mask)[0]
@@ -894,7 +899,7 @@ class AegisSwarmEnv(VecEnv):
         vel = self._vel_np.reshape(W, self._num_drones, 3)
         vel[:, :N] = dvel
         vel[:, N:] = avel_cmd
-        self.drone_vel = wp.array(self._vel_np, dtype=wp.vec3, device=self.device)
+        self.drone_vel.assign(self._vel_np)
 
         # --- 2. wind (once per control step; steady component re-rolled per episode) ---
         if c.wind_enabled:
@@ -906,7 +911,7 @@ class AegisSwarmEnv(VecEnv):
                 wind[gust, 0] += mag * np.cos(ang)
                 wind[gust, 1] += mag * np.sin(ang)
                 wind[gust, 2] += self._rng.uniform(-0.3, 0.3, gust.sum()) * c.wind_gust_force
-            self.wind_wp = wp.array(wind, dtype=wp.vec3, device=self.device)
+            self.wind_wp.assign(wind)
 
         # --- 3. physics substeps ---
         for _ in range(self.substeps):
