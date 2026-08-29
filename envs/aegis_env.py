@@ -89,6 +89,12 @@ class AegisConfig:
     obstacle_min_spacing: float = 120.0
     obstacle_collision_radius: float = 55.0   # horizontal kill radius
     obstacle_danger_radius: float = 90.0      # safety shaping starts here (audit: was 70)
+    # Physical obstacle-proximity speed brake (density-invariant terrain-collision
+    # reduction). 0 = off (bit-identical). >0 = min speed fraction at the wall;
+    # commanded speed ramps from full (at brake_range) down to this floor (at the
+    # surface). Applies in the dynamics, so it doesn't over-avoid/crowd at scale.
+    obstacle_speed_limit: float = 0.0
+    obstacle_brake_range: float = 60.0        # shell distance where braking begins
 
     # Sensing (global shared detection, latched once seen)
     sensor_range: float = 350.0        # 0 = unlimited
@@ -895,6 +901,16 @@ class AegisSwarmEnv(VecEnv):
                     rvel = np.clip(racts.reshape(W, M, 3), -1, 1) * c.attacker_speed_limit
                     rvel[~self.att_active] = 0.0
                     avel_cmd = np.where(sel[:, None, None], rvel, avel_cmd)
+
+        # physical obstacle-proximity speed brake (density-invariant): scale each
+        # defender's commanded velocity down as it nears an obstacle surface
+        if c.obstacle_speed_limit > 0:
+            d_shell, d_below, _ = self._terrain_shell(self.def_pos)
+            if d_shell is not None:
+                min_shell = np.where(d_below, d_shell, np.inf).min(axis=-1)  # (W,N)
+                frac = np.clip(min_shell / max(c.obstacle_brake_range, 1e-3),
+                               c.obstacle_speed_limit, 1.0)
+                dvel = dvel * frac[..., None]
 
         vel = self._vel_np.reshape(W, self._num_drones, 3)
         vel[:, :N] = dvel
