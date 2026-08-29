@@ -320,6 +320,16 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**MULTI-TARGET SPLIT DEFENSE (2026-08-29, DD-17)** — NEW CAPABILITY, see
+`experiments/split_20260829/results.md`. The swarm now protects K separate points
+at once (num_targets config; K=1 bit-identical, 22/22 tests). Implemented with
+ZERO allocator/interception change — defenders follow assigned attackers, which
+now head to different points, so coverage emerges. `aegis_split` (K=3 fine-tune)
+= 0.90 win / 4.5% attrition defending 3 points, beats big24 zero-shot (0.87 /
+8.4%), and retains **1.00 at K=1 (no regression — a strict superset)**. big24
+also generalizes to split zero-shot (0.87), another payoff of the ego-centric
+design. Renderer draws all targets; GIF aegis_split3_15v15.
+
 **SPEED-BRAKE A/B + ATTRITION VERDICT (2026-08-29, DD-17)** — see
 `experiments/brake_20260829/results.md`. A physical obstacle speed-brake
 (dynamics, not reward) was meant to be density-invariant — it FAILED the same
