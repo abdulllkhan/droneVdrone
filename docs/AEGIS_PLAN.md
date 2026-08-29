@@ -320,6 +320,15 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**SAFETY-SHAPING A/B (2026-08-29, DD-17)** — see
+`experiments/safety_20260829/results.md`. Stronger safety (r_safety_coeff −0.15,
+danger radius 110) is a DENSITY-DEPENDENT TRADEOFF, not a win: cuts attrition
+−3pt at trained density (10-20v20) but +11pt at 50v40 (over-avoidance piles up
+crowded arenas). **Kept big24 as champion — did NOT adopt.** Lesson: safety
+shaping tuned at one density doesn't transfer; attrition needs a density-invariant
+mechanism (obstacle-relative speed limit / danger-radius curriculum), not a fixed
+stronger coeff. `aegis_safe` kept for ~10-20v20-density terrain ops only.
+
 **BIG-SWARM SCALE-UP (2026-08-29, DD-17)** — see
 `experiments/bigswarm_20260829/results.md`. First run on the lifted cap: a
 **24v24 generalist at 448 worlds** (champion `aegis_big24`). Trained range
