@@ -320,6 +320,15 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**BIG-SWARM SCALE-UP (2026-08-29, DD-17)** — see
+`experiments/bigswarm_20260829/results.md`. First run on the lifted cap: a
+**24v24 generalist at 448 worlds** (champion `aegis_big24`). Trained range
+15v15–24v24 = 100% win / zero leakers all terrains. **Generalizes UP with zero
+extra training: 30v30, 40v40, 50v40 all 100%, and outnumbered 20v40 (2:1) at
+100% zero-leaker** (reusable interceptors re-engage). Size-invariance now proven
+1v1→50v40 across the model family. Bad-death rises with density (16% @ 50v40) —
+survival-bonus shaping is the lever if needed.
+
 **OOM FIXED — FULL 512 WORLDS RESTORED (2026-08-29, DD-17)** — see
 `experiments/oomfix_20260829/results.md`. The recurring exit-137 was GPU-buffer
 allocation churn (fresh wp.array every step/reset), not RAM. Fix (commit
