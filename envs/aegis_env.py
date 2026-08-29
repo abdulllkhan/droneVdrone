@@ -161,6 +161,11 @@ class AegisConfig:
     target_speed_range: tuple = (0.0, 0.0)
     target_wander_radius: float = 250.0
     target_waypoint_tol: float = 5.0
+    # Split defense: protect K separate points at once. 1 = bit-identical to the
+    # single-target env. Attackers split across the K targets; each breaches its
+    # own. Defenders (via the allocator) spread to follow their assigned attackers.
+    num_targets: int = 1
+    target_spread: float = 180.0       # radius the K targets are placed within
 
     # Spawns
     defender_dist_range: tuple = (20.0, 120.0)
@@ -309,7 +314,10 @@ class AegisSwarmEnv(VecEnv):
 
         W, N, M = num_worlds, self.n_max, self.m_max
         # --- per-world episode state ---
-        self.target_pos = np.zeros((W, 3), dtype=np.float32)     # PER-WORLD target
+        self.target_pos = np.zeros((W, 3), dtype=np.float32)     # PER-WORLD target (centroid)
+        self.K = max(1, c.num_targets)
+        self.targets = np.zeros((W, self.K, 3), dtype=np.float32)  # K protected points
+        self.att_target = np.zeros((W, self.m_max), dtype=np.int64)  # each attacker's target idx
         self.n_w = np.full(W, N, dtype=np.int64)
         self.m_w = np.full(W, M, dtype=np.int64)
         self.step_count = np.zeros(W, dtype=np.int64)
@@ -415,7 +423,24 @@ class AegisSwarmEnv(VecEnv):
         rng = self._rng
         n, m = self._sample_nm()
         self.n_w[w], self.m_w[w] = n, m
-        self.target_pos[w] = (0.0, 0.0, rng.uniform(*c.target_alt_range))
+        alt = rng.uniform(*c.target_alt_range)
+        if self.K == 1:
+            self.targets[w, 0] = (0.0, 0.0, alt)
+            self.att_target[w] = 0
+        else:
+            # K points evenly spaced on a ring (jittered), centroid at origin
+            base_ang = rng.uniform(0, 2 * np.pi)
+            for k in range(self.K):
+                a = base_ang + 2 * np.pi * k / self.K + rng.uniform(-0.2, 0.2)
+                r = c.target_spread * (0.7 + 0.3 * rng.uniform())
+                self.targets[w, k] = (r * np.cos(a), r * np.sin(a),
+                                      rng.uniform(*c.target_alt_range))
+            # attackers split across targets round-robin (shuffled)
+            perm = rng.permutation(self.m_max)
+            self.att_target[w, perm] = np.arange(self.m_max) % self.K
+        # centroid drives spawn rings + guard stations (= the single point when K=1)
+        self.target_pos[w] = self.targets[w].mean(axis=0)
+        self.target_pos[w, 2] = alt
 
         base = w * self._num_drones
         # Defenders: ring around target; unused slots parked high in a corner.
@@ -497,7 +522,9 @@ class AegisSwarmEnv(VecEnv):
         self.att_stream_dead[w] = True
         self.att_stream_dead[w, :m] = False
         flat_att = self._init_pos_np.reshape(self.num_worlds, self._num_drones, 3)[w, self.n_max:]
-        self.att_prev_dist[w] = np.linalg.norm(flat_att - self.target_pos[w], axis=-1)
+        _att_tgt = (self.target_pos[w][None] if self.K == 1
+                    else self.targets[w, self.att_target[w]])
+        self.att_prev_dist[w] = np.linalg.norm(flat_att - _att_tgt, axis=-1)
         self._att_ep_rew[w] = 0.0
         self._att_ep_len[w] = 0
 
@@ -572,8 +599,9 @@ class AegisSwarmEnv(VecEnv):
             mag = rng.uniform(0, c.wind_max_force)
             self._wind_np[w] = (mag * np.cos(ang), mag * np.sin(ang), 0.0)
 
-        # moving-target (convoy) init — AFTER terrain, the sampler needs obstacles
-        self.target_speed_w[w] = rng.uniform(*c.target_speed_range)
+        # moving-target (convoy) init — AFTER terrain, the sampler needs obstacles.
+        # Multi-target is static (moving+split out of scope).
+        self.target_speed_w[w] = 0.0 if self.K > 1 else rng.uniform(*c.target_speed_range)
         self.target_vel[w] = 0.0
         self.target_pos_prev[w] = self.target_pos[w]
         self.target_wp[w] = (self._sample_target_wp(w)
@@ -731,6 +759,22 @@ class AegisSwarmEnv(VecEnv):
         ], axis=1).astype(np.float32)
         return shell, below, centers
 
+    def _att_targets(self):
+        """Each attacker's assigned protected point. (W, M, 3). K=1 -> target_pos."""
+        if self.K == 1:
+            return np.broadcast_to(self.target_pos[:, None, :], self.att_pos.shape)
+        return np.take_along_axis(self.targets, self.att_target[..., None], axis=1)
+
+    def _nearest_target(self, pos):
+        """Nearest protected point to each entity. pos (W,E,3) -> (W,E,3). K=1 fast path."""
+        if self.K == 1:
+            return np.broadcast_to(self.target_pos[:, None, :], pos.shape)
+        d = np.linalg.norm(pos[:, :, None, :2] - self.targets[:, None, :, :2], axis=-1)
+        idx = np.argmin(d, axis=-1)                                   # (W,E)
+        return np.take_along_axis(
+            self.targets[:, None, :, :].repeat(pos.shape[1], 1),
+            idx[..., None, None].repeat(3, -1), axis=2)[:, :, 0, :]
+
     def _pot_dist(self):
         """Distance to my potential goal: assigned attacker, or guard station. (W,N)"""
         goal = self.stations.copy()
@@ -753,7 +797,8 @@ class AegisSwarmEnv(VecEnv):
         """Desired velocities (W, M, 3) for all active attackers."""
         c = self.cfg
         W, M = self.num_worlds, self.m_max
-        to_target = self.target_pos[:, None, :] - self.att_pos          # (W, M, 3)
+        att_tgt = self._att_targets()                                  # (W, M, 3)
+        to_target = att_tgt - self.att_pos                             # (W, M, 3)
         dist = np.linalg.norm(to_target, axis=-1, keepdims=True)
         dist = np.maximum(dist, 0.01)
         heading = to_target / dist
@@ -769,7 +814,7 @@ class AegisSwarmEnv(VecEnv):
         if want_flank.any():
             ang = 2 * np.pi * a_idx / max(M, 1) + np.pi / 4
             radius = dist[..., 0] * 0.15
-            wpt = self.target_pos[:, None, :] + np.stack(
+            wpt = att_tgt + np.stack(
                 [radius * np.cos(ang), radius * np.sin(ang), np.zeros_like(radius)],
                 axis=-1)
             fdir = wpt - self.att_pos
@@ -1008,10 +1053,15 @@ class AegisSwarmEnv(VecEnv):
                         self.ep_first_intercept[w] = int(self.step_count[w])
                     self.realloc_needed[w] = True
 
-        # --- 6. swept breaches (attacker vs its world's target, target-relative
+        # --- 6. swept breaches (attacker vs ITS assigned target, target-relative
         #        frame so the check stays exact for a MOVING target) ---
-        b0 = self.att_pos_prev - self.target_pos_prev[:, None, :]
-        b1 = self.att_pos - self.target_pos[:, None, :]
+        if self.K == 1:
+            b0 = self.att_pos_prev - self.target_pos_prev[:, None, :]
+            b1 = self.att_pos - self.target_pos[:, None, :]
+        else:
+            att_tgt = self._att_targets()   # static when K>1, so prev==current
+            b0 = self.att_pos_prev - att_tgt
+            b1 = self.att_pos - att_tgt
         breach_min = segment_min_dist(b0, b1)                            # (W, M)
         breach_hit = (breach_min < c.target_reached_dist) & self.att_active
         breach_events = []
@@ -1092,7 +1142,7 @@ class AegisSwarmEnv(VecEnv):
         shaping = np.where(interceptor, c.r_close_coeff * delta,
                            c.r_guard_close_coeff * delta)
         near_target = np.linalg.norm(
-            self.def_pos - self.target_pos[:, None, :], axis=-1) < 150.0
+            self.def_pos - self._nearest_target(self.def_pos), axis=-1) < 150.0
         shaping += np.where(~interceptor & near_target, c.r_guard_hold, 0.0)
         rewards += np.where(living, shaping, 0.0).astype(np.float32)
         self.prev_pot_dist = pot
@@ -1226,7 +1276,7 @@ class AegisSwarmEnv(VecEnv):
         active = self.att_active
 
         # potential shaping toward the target
-        dist_t = np.linalg.norm(self.att_pos - self.target_pos[:, None, :], axis=-1)
+        dist_t = np.linalg.norm(self.att_pos - self._att_targets(), axis=-1)
         rewards += np.where(active, c.ar_close_coeff * (self.att_prev_dist - dist_t), 0.0)
         self.att_prev_dist = dist_t.astype(np.float32)
 
@@ -1319,7 +1369,7 @@ class AegisSwarmEnv(VecEnv):
         n_alive = alive.sum(axis=1, keepdims=True).astype(np.float32)
         m_det = (self.att_active & self.att_detected).sum(axis=1, keepdims=True)
 
-        rel_t = self.target_pos[:, None, :] - self.def_pos               # (W,N,3)
+        rel_t = self._nearest_target(self.def_pos) - self.def_pos        # (W,N,3)
         dist_t = np.linalg.norm(rel_t, axis=-1, keepdims=True)
 
         obs[..., 0:3] = self.def_vel / 60.0
@@ -1344,7 +1394,7 @@ class AegisSwarmEnv(VecEnv):
         safe_d = np.maximum(d, 0.01)
         los = rel / safe_d[..., None]
         closing = -np.sum(rel * relv, axis=-1) / safe_d
-        goal_dist_t = np.linalg.norm(goal_pos - self.target_pos[:, None, :], axis=-1)
+        goal_dist_t = np.linalg.norm(goal_pos - self._nearest_target(goal_pos), axis=-1)
         tgo = assigned_tgo(self.def_pos, c.defender_speed_limit,
                            self.att_pos, self.att_vel, self.assign)
         pip = goal_pos + goal_vel * tgo[..., None]
@@ -1458,7 +1508,7 @@ class AegisSwarmEnv(VecEnv):
         obs = np.zeros((W, M, ATT_OBS_DIM), dtype=np.float32)
         active = self.att_active
 
-        rel_t = self.target_pos[:, None, :] - self.att_pos
+        rel_t = self._att_targets() - self.att_pos
         dist_t = np.linalg.norm(rel_t, axis=-1)
         obs[..., 0:3] = self.att_vel / 50.0
         obs[..., 3] = self.att_pos[..., 2] / 200.0

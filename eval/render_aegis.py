@@ -13,7 +13,7 @@ import numpy as np
 
 
 def rollout(model_path, n, m, kamikaze, strategy, realism, seed, terrain="hills",
-            target_speed=0.0):
+            target_speed=0.0, num_targets=1):
     import warp as wp
     wp.init()
     from stable_baselines3 import PPO
@@ -21,7 +21,7 @@ def rollout(model_path, n, m, kamikaze, strategy, realism, seed, terrain="hills"
 
     kw = dict(n_max=n, m_max=m, fixed_nm=(n, m), n_range=(n, n), m_range=(m, m),
               kamikaze=kamikaze, attacker_strategies=(strategy,), seed=seed,
-              terrain=terrain,
+              terrain=terrain, num_targets=num_targets,
               target_speed_range=(target_speed, target_speed))
     if realism:
         kw.update(num_obstacles=5, wind_enabled=True, wind_max_force=0.5,
@@ -37,7 +37,8 @@ def rollout(model_path, n, m, kamikaze, strategy, realism, seed, terrain="hills"
                        if env.hill_count[0] else None),
                 boxes=(env.box_obs[0][:env.box_count[0]].copy()
                        if env.box_count[0] else None),
-                hill_r=env.cfg.obstacle_radius, bounds=env.cfg.arena_bounds)
+                hill_r=env.cfg.obstacle_radius, bounds=env.cfg.arena_bounds,
+                targets=env.targets[0].copy())
     frames = []
     for _ in range(env.max_steps + 1):
         frames.append(dict(
@@ -87,12 +88,17 @@ def render(frames, meta, out_path, title, stride=2, fps=18, trail=18):
                 ax.add_patch(Rectangle((bx[0] - bx[2], bx[1] - bx[3]),
                                        2 * bx[2], 2 * bx[3],
                                        color="#44475e", alpha=0.95, zorder=1))
-        tg = f.get("tp", meta["target"])
-        tps = [frames[k * stride].get("tp", meta["target"]) for k in range(0, fi + 1)]
-        ax.plot([p[0] for p in tps], [p[1] for p in tps],
-                c="#ffd700", alpha=0.35, lw=1.4, zorder=4)
-        ax.scatter([tg[0]], [tg[1]], marker="*", s=420, c="#ffd700",
-                   edgecolors="#fff", zorder=5, label="target")
+        tgts = meta.get("targets")
+        if tgts is not None and len(tgts) > 1:
+            ax.scatter(tgts[:, 0], tgts[:, 1], marker="*", s=420, c="#ffd700",
+                       edgecolors="#fff", zorder=5, label="targets")
+        else:
+            tg = f.get("tp", meta["target"])
+            tps = [frames[k * stride].get("tp", meta["target"]) for k in range(0, fi + 1)]
+            ax.plot([p[0] for p in tps], [p[1] for p in tps],
+                    c="#ffd700", alpha=0.35, lw=1.4, zorder=4)
+            ax.scatter([tg[0]], [tg[1]], marker="*", s=420, c="#ffd700",
+                       edgecolors="#fff", zorder=5, label="target")
         # trails
         lo = max(0, fi - trail)
         for d in range(len(f["dp"])):
@@ -156,6 +162,8 @@ def main():
                    choices=["hills", "urban", "maze", "none"])
     p.add_argument("--target-speed", type=float, default=0.0,
                    help="moving-target (convoy) speed in m/s")
+    p.add_argument("--num-targets", type=int, default=1,
+                   help="split defense: number of protected points")
     p.add_argument("--plain", action="store_true", help="no hills/wind")
     p.add_argument("--seed", type=int, default=7)
     p.add_argument("--out", default="")
@@ -169,7 +177,7 @@ def main():
                        f"{'kam' if args.kamikaze else 'reuse'}_{n}v{m}_{args.strategy}{tslug}.gif")
     frames, meta = rollout(args.model, n, m, args.kamikaze, args.strategy,
                            not args.plain, args.seed, terrain=args.terrain,
-                           target_speed=args.target_speed)
+                           target_speed=args.target_speed, num_targets=args.num_targets)
     o = (meta["outcome"] or [{}])[0]
     title = f"AEGIS {n}v{m} [{args.strategy}]" + (" kamikaze" if args.kamikaze else " reusable")
     nf = render(frames, meta, out, title, stride=args.stride, fps=args.fps)

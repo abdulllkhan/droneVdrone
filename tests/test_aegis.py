@@ -370,6 +370,40 @@ def test_cf_bridge_encoder_matches_env():
 
 
 @needs_cuda
+def test_multitarget_split_defense():
+    """K=3 split defense: attackers spread across targets, each breaches its own,
+    obs stays finite/56-dim, and at least two distinct targets get breached."""
+    import warp as wp
+    wp.init()
+    from envs.aegis_env import AegisSwarmEnv, AegisConfig
+    env = AegisSwarmEnv(4, AegisConfig(
+        n_max=6, m_max=9, fixed_nm=(6, 9), n_range=(6, 6), m_range=(9, 9),
+        terrain="none", num_obstacles=0, wind_enabled=False, kamikaze=False,
+        num_targets=3, target_spread=180.0, seed=5))
+    obs = env.reset()
+    assert obs.shape == (24, 56) and np.isfinite(obs).all()
+    # attackers are split across all 3 targets
+    for w in range(4):
+        assert set(env.att_target[w, :9].tolist()) == {0, 1, 2}, env.att_target[w]
+    # targets are genuinely separated (not stacked at origin)
+    for w in range(4):
+        d01 = np.linalg.norm(env.targets[w, 0, :2] - env.targets[w, 1, :2])
+        assert d01 > 80.0
+    breached_targets = set()
+    for _ in range(400):
+        env.step_async(np.zeros((env.n_envs, 3), dtype=np.float32))  # passive defenders
+        env.step_wait()
+        assert np.isfinite(env.obs_buf).all()
+        for w in range(4):
+            for a in np.nonzero(env.att_breached[w, :9])[0]:
+                breached_targets.add((w, int(env.att_target[w, a])))
+    # with passive defenders, attackers reach their targets across >=2 distinct points
+    distinct = {t for (_, t) in breached_targets}
+    assert len(distinct) >= 2, f"only targets {distinct} breached"
+    env.close()
+
+
+@needs_cuda
 def test_obs_contract_across_sizes():
     import warp as wp
     wp.init()
