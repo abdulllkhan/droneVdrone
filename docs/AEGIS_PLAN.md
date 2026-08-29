@@ -320,6 +320,20 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**SPEED-BRAKE A/B + ATTRITION VERDICT (2026-08-29, DD-17)** — see
+`experiments/brake_20260829/results.md`. A physical obstacle speed-brake
+(dynamics, not reward) was meant to be density-invariant — it FAILED the same
+way as shaping, worse: −4pt attrition @20v20 but **+20pt @50v40** (braked
+defenders perpetually slowed in crowded arenas → more collisions). **Two
+independent mechanisms (reward shaping, physical brake) now confirm: terrain
+attrition at high density is NOT a caution-tuning problem** — caution backfires
+when crowded, and win stays ~100% regardless (reusable interceptors absorb it).
+Attrition-at-density is an intrinsic cost; the lever (if ever needed) is
+STRUCTURAL (fewer obstacles / inter-drone spacing), not shaping. Kept big24.
+Brake code retained (default off) for ≤20v20 terrain ops. Ops: 448-world AEGIS
+OOMs when the concurrent non-AEGIS `dev/probe_gemma_robust.py` shares the box —
+use ≤256 worlds when sharing.
+
 **SAFETY-SHAPING A/B (2026-08-29, DD-17)** — see
 `experiments/safety_20260829/results.md`. Stronger safety (r_safety_coeff −0.15,
 danger radius 110) is a DENSITY-DEPENDENT TRADEOFF, not a win: cuts attrition
