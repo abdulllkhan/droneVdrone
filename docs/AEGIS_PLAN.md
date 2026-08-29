@@ -320,6 +320,14 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**CONVOY ADVERSARIAL VERIFICATION (2026-08-29, DD-17)** — see
+`experiments/convoyadv_20260829/results.md`. Learned attackers vs the frozen
+moving-target escort: **no gap** (true_breach 0.077 < 0.08; grid 0.89 win / 0.016
+breach on 10 m/s targets). Escort is deployment-grade as-is. Emerging **rule**:
+small-team policies (cf_lab, 1–4) need an adversarial hardening pass; large-team
+policies (largeP, convoy, 4–20) inherit robustness structurally. Attacker kept
+for future pools; new GIF aegis_convoyadv_hills_8v10.
+
 **CRAZYFLIE ADVERSARIAL VERIFICATION (2026-08-28, DD-17)** — see
 `experiments/cfadv_20260828/results.md`. The small-team lab policy had a REAL
 adversarial gap (unlike the large generalist): learned attackers breached frozen
