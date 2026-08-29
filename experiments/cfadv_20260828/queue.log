@@ -1,0 +1,14 @@
+=== 2026-08-28 19:44:55 START A_cfadv_cotrain
+=== 2026-08-28 19:48:17 END(exit=137) A_cfadv_cotrain
+=== 2026-08-28 19:48:17 START B_gate_evals
+=== 2026-08-28 19:48:46 END(exit=0) B_gate_evals
+=== 2026-08-28 19:48:46 START C_dashboard
+=== 2026-08-28 19:48:46 END(exit=0) C_dashboard
+=== 2026-08-28 19:48:46 CFADV_DONE queue
+=== 2026-08-28 19:51:51 START A2_cfadv_cotrain
+=== 2026-08-28 20:29:20 END(exit=0) A2_cfadv_cotrain
+=== 2026-08-28 20:29:20 START B2_gate_evals
+=== 2026-08-28 20:30:42 END(exit=0) B2_gate_evals
+=== 2026-08-28 20:30:42 START C2_dashboard
+=== 2026-08-28 20:30:42 END(exit=0) C2_dashboard
+=== 2026-08-28 20:30:42 CFADV2_DONE queue

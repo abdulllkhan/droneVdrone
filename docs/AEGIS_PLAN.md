@@ -320,6 +320,17 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**CRAZYFLIE ADVERSARIAL VERIFICATION (2026-08-28, DD-17)** — see
+`experiments/cfadv_20260828/results.md`. The small-team lab policy had a REAL
+adversarial gap (unlike the large generalist): learned attackers breached frozen
+cf_lab at 0.19 (evade gate). One co-training round closed it →
+**`aegis_adv_defender_cf_lab`** (win 0.96/breach 0.02 vs mixture; 0.991/0.005 vs
+adaptive RL in the grid harness; no scripted regression). **Ship the hardened
+model, not raw cf_lab.** Also: **`deploy/cf_bridge.py`** — the CrazyFlie mocap→
+policy→setpoint bridge (encoder test-verified bit-identical to sim, --dry-run
+flies 2v2 in 4.1 s; cflib path stubbed for first hardware flight). Recurring
+exit-137 = transient unified-memory spike, use ≤256 worlds.
+
 **NIGHT 2 (2026-08-28, branch DD-17): CRAZYFLIE-READY + CONVOY ESCORT** — see
 `experiments/night2_20260828/results.md`. **`aegis_cf_lab`** = validated lab
 policy via pure unit-mapping (L=125, T=√2 → 0.34 m/s / 3 m/s² / 8.49 Hz, minimal
