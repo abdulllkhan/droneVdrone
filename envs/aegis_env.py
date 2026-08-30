@@ -166,6 +166,9 @@ class AegisConfig:
     # own. Defenders (via the allocator) spread to follow their assigned attackers.
     num_targets: int = 1
     target_spread: float = 180.0       # radius the K targets are placed within
+    # Variable target count: sample K ~ U[lo, hi] per world (generalist over the
+    # number of protected points). Default (0,0) -> use fixed num_targets.
+    target_count_range: tuple = (0, 0)
 
     # Spawns
     defender_dist_range: tuple = (20.0, 120.0)
@@ -315,8 +318,11 @@ class AegisSwarmEnv(VecEnv):
         W, N, M = num_worlds, self.n_max, self.m_max
         # --- per-world episode state ---
         self.target_pos = np.zeros((W, 3), dtype=np.float32)     # PER-WORLD target (centroid)
-        self.K = max(1, c.num_targets)
-        self.targets = np.zeros((W, self.K, 3), dtype=np.float32)  # K protected points
+        # K = buffer size (max protected points); k_w[w] = actual count this episode
+        self._var_k = c.target_count_range[1] > 0
+        self.K = max(1, c.target_count_range[1] if self._var_k else c.num_targets)
+        self.targets = np.zeros((W, self.K, 3), dtype=np.float32)  # protected points
+        self.k_w = np.full(W, self.K, dtype=np.int64)             # real count per world
         self.att_target = np.zeros((W, self.m_max), dtype=np.int64)  # each attacker's target idx
         self.n_w = np.full(W, N, dtype=np.int64)
         self.m_w = np.full(W, M, dtype=np.int64)
@@ -424,22 +430,27 @@ class AegisSwarmEnv(VecEnv):
         n, m = self._sample_nm()
         self.n_w[w], self.m_w[w] = n, m
         alt = rng.uniform(*c.target_alt_range)
-        if self.K == 1:
+        kw = (int(rng.integers(c.target_count_range[0], c.target_count_range[1] + 1))
+              if self._var_k else self.K)
+        kw = max(1, min(kw, self.K))
+        self.k_w[w] = kw
+        if kw == 1:
             self.targets[w, 0] = (0.0, 0.0, alt)
-            self.att_target[w] = 0
         else:
-            # K points evenly spaced on a ring (jittered), centroid at origin
             base_ang = rng.uniform(0, 2 * np.pi)
-            for k in range(self.K):
-                a = base_ang + 2 * np.pi * k / self.K + rng.uniform(-0.2, 0.2)
+            for k in range(kw):
+                a = base_ang + 2 * np.pi * k / kw + rng.uniform(-0.2, 0.2)
                 r = c.target_spread * (0.7 + 0.3 * rng.uniform())
                 self.targets[w, k] = (r * np.cos(a), r * np.sin(a),
                                       rng.uniform(*c.target_alt_range))
-            # attackers split across targets round-robin (shuffled)
-            perm = rng.permutation(self.m_max)
-            self.att_target[w, perm] = np.arange(self.m_max) % self.K
-        # centroid drives spawn rings + guard stations (= the single point when K=1)
-        self.target_pos[w] = self.targets[w].mean(axis=0)
+        # pad unused slots with a far corner so they're never nearest / assigned
+        if kw < self.K:
+            self.targets[w, kw:] = (c.arena_bounds * 4, c.arena_bounds * 4, alt)
+        # attackers split across the REAL targets round-robin (shuffled)
+        perm = rng.permutation(self.m_max)
+        self.att_target[w, perm] = np.arange(self.m_max) % kw
+        # centroid (real targets) drives spawn rings + guard stations
+        self.target_pos[w] = self.targets[w, :kw].mean(axis=0)
         self.target_pos[w, 2] = alt
 
         base = w * self._num_drones
@@ -449,8 +460,8 @@ class AegisSwarmEnv(VecEnv):
         # all-at-once rush. K=1 -> centre = target_pos, bit-identical.
         for d in range(self.n_max):
             if d < n:
-                centre = (self.target_pos[w] if self.K == 1
-                          else self.targets[w, d % self.K])
+                centre = (self.target_pos[w] if kw == 1
+                          else self.targets[w, d % kw])
                 ang = rng.uniform(0, 2 * np.pi)
                 dist = rng.uniform(*c.defender_dist_range)
                 self._init_pos_np[base + d] = (
