@@ -37,23 +37,26 @@ Because reusable interceptors re-engage, **N defenders beat 2N attackers with
 zero leakers**. The ego-centric obs + allocator carry the policy far past its
 training range.
 
-## 3. Multi-target split defense — protect 3 points at once (NEW)
-K=3 separated targets, `aegis_splitspawn` (superset of the single-target champion):
+## 3. Multi-target split defense — one policy for 1–4 points (NEW)
+`aegis_vark` defends **any number of protected points (1–4)**, chosen per episode:
 
-| Cell | vs saturation raids | vs direct simultaneous raids |
-|---|---|---|
-| 10v10 | 100% | 90% |
-| 15v15 | 100% | 95% |
-| 20v20 | 100% | 95% |
+| Points | Overall win | Direct raids | Saturation raids |
+|---|---|---|---|
+| 1 | **100%** | 100% | 100% |
+| 2 | 98% | 97% | 100% |
+| 3 | 96% | 92% | 100% |
+| 4 | 95% | 91% | 100% |
 
-Split defense works, implemented with **zero allocator/interception change** —
-coverage emerges from defenders following assigned attackers. `aegis_splitspawn`
-retains **100% at K=1** (strict superset). The direct-simultaneous case (all
-attackers rush all 3 targets at once) was the last uneven cell — closed from
-74–81% → **90–95%** in two steps: direct-weighted fine-tuning (+6pt) and then
-**distributed defender spawns** (pre-position across the K targets, the decisive
-structural fix that halved the remaining gap). Distributed spawns help *any*
-split policy (an env property, not a learned behavior).
+Split defense is implemented with **zero allocator/interception change** —
+coverage emerges from defenders following assigned attackers. **Generality is
+free:** K=1 stays 100% (matches the single-target champions), K=3 matches the
+dedicated split model, and one policy covers the whole range — no per-scenario
+model selection. Saturation raids are 100% at every count; direct simultaneous
+raids degrade gracefully (100→91%) as the swarm covers more spread points.
+Two enablers closed the hard direct-raid case from 74–81% to 90+%: direct-weighted
+training and **distributed defender spawns** (pre-position across the targets —
+an env property that helps any split policy). The same invariance that carries
+the swarm over drone count carries it over target count.
 
 ## 4. CrazyFlie deployment — sim-to-real ready
 The `aegis_adv_defender_cf_lab` model + `deploy/cf_bridge.py` bring the policy to
@@ -101,7 +104,8 @@ The system was stress-tested against *learning* attackers, not just scripts:
 ## Champions (all in `models/`, browse via `python -m eval.launcher`)
 | Model | Role |
 |---|---|
-| `aegis_splitspawn` | **primary** — single + 3-target defense (distributed-spawn, direct-hardened), 1v1→50v40 |
+| `aegis_vark` | **multi-target primary** — defends 1–4 points, one policy (95–100%) |
+| `aegis_big24` / `aegis_oomval` | single-target scale reference (1v1→50v40) |
 | `aegis_big24` | 24v24-trained scale generalist |
 | `aegis_adv_defender_cf_lab` | CrazyFlie deployment (hardened, minimal obs) |
 | `aegis_convoy` | moving-target escort |
