@@ -109,12 +109,15 @@ moving targets) where they were each validated.
 - **Split defense vs direct simultaneous raids** is the hardest case but now
   90–95% (was 74–81%; closed by direct-weighted training + distributed defender
   spawns). Saturation raids and single-target stay 100%.
-- **Multi-target defense is sensor-hungry.** Single-target tolerates cheap
-  sensing (98–100% even at 75 m detection), but split defense (K=3) collapses
-  under sensor degradation (74% at 150 m, 19% at 75 m) — defenders spread across
-  targets can't collectively cover a large area with short-range sensing. Split
-  defense in the field needs good sensor coverage (≥300 m-equiv / mocap); speed
-  disadvantage and mid-fight kills, by contrast, degrade gracefully at all K.
+- **Multi-target defense needs sensor range ≥ target spacing** (a geometric
+  floor, not a tuning target). Single-target tolerates cheap sensing (98–100%
+  even at 75 m). Split defense (K=3, targets 180 m apart) degrades under sensor
+  loss, and the fragility is only *partly* trainable: sensor-degraded training
+  recovers 150 m sensing from 74%→80% (near the spacing threshold) but cannot
+  move 75 m sensing (19%→22%) — a defender at one target physically cannot detect
+  an attacker 180 m away, so blind spots are geometric. **Design rule: size
+  detection range to the distance between protected points.** Speed disadvantage
+  and mid-fight kills, by contrast, degrade gracefully at all K.
 - **No hardware flight yet** — the CrazyFlie path is validated in sim and dry-run;
   the cflib mocap loop is stubbed pending a real drone + motion-capture rig.
 - **Convoy + split are mutually exclusive** (moving multi-target is out of scope).

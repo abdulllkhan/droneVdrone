@@ -1,0 +1,22 @@
+/home/abdulllkhan/Documents/droneVdrone/venv/lib/python3.12/site-packages/stable_baselines3/common/on_policy_algorithm.py:150: UserWarning: You are trying to run PPO on the GPU, but it is primarily intended to run on the CPU when not using a CNN policy (you are using ActorCriticPolicy which should be a MlpPolicy). See https://github.com/DLR-RM/stable-baselines3/issues/1245 for more info. You can pass `device='cpu'` or `export CUDA_VISIBLE_DEVICES=` to force using the CPU.Note: The model will train, but the GPU utilization will be poor and the training might take longer than on CPU.
+  warnings.warn(
+pybullet build time: Mar 22 2026 22:06:37
+/home/abdulllkhan/Documents/droneVdrone/venv/lib/python3.12/site-packages/stable_baselines3/common/vec_env/base_vec_env.py:78: UserWarning: The `render_mode` attribute is not defined in your environment. It will be set to None.
+  warnings.warn("The `render_mode` attribute is not defined in your environment. It will be set to None.")
+Warp 1.12.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.0
+   Devices:
+     "cpu"      : "aarch64"
+     "cuda:0"   : "NVIDIA GB10" (122 GiB, sm_121, mempool enabled)
+   Kernel cache:
+     /home/abdulllkhan/.cache/warp/1.12.0
+Module validate_and_correct_inertia_kernel_8fd4dd1e 8fd4dd1 load on device 'cuda:0' took 0.71 ms  (cached)
+Module envs.aegis_env dbac9b8 load on device 'cuda:0' took 0.51 ms  (cached)
+Module newton._src.solvers.semi_implicit.kernels_body 51a0ce7 load on device 'cuda:0' took 1.50 ms  (cached)
+Module newton._src.solvers.solver 2c8892b load on device 'cuda:0' took 0.46 ms  (cached)
+  8v8 [direct   ] win=6% breach=0.258 leakers=2.06 bad=8.85%
+  8v8 [saturation] win=21% breach=0.201 leakers=1.60 bad=7.55%
+  15v15 [direct   ] win=17% breach=0.133 leakers=2.00 bad=9.72%
+  15v15 [saturation] win=33% breach=0.089 leakers=1.33 bad=10.56%
+
+Wrote models/eval_output/nvm_grid_sensrobust_s75_k3.csv (+ .json, heatmap PNG)
