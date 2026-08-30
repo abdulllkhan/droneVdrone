@@ -87,6 +87,18 @@ The system was stress-tested against *learning* attackers, not just scripts:
   on the first adversarial pass. Hardening transfers through warm-starts.
 - The population loop converged (attacker exploit sizes 0.75 → 0.46 → 0.094).
 
+## Model selection guide
+| Scenario | Use | Notes |
+|---|---|---|
+| **General default** | `aegis_vark` | 1–4 targets, all swarm sizes; the broadest single policy |
+| Pure single-target scale (up to 50v40) | `aegis_big24` / `aegis_oomval` | reference for the largest single-point battles |
+| CrazyFlie / lab deployment | `aegis_adv_defender_cf_lab` | unit-mapped, minimal obs, adversarially hardened; use with `deploy/cf_bridge.py` |
+| Moving protected target (convoy) | `aegis_convoy` | escort a target wandering ≤10 m/s |
+
+`aegis_vark` is the recommended default for most uses. The specialized models
+exist for their named cases (extreme single-target scale, hardware deployment,
+moving targets) where they were each validated.
+
 ## Honest limitations
 - **Density-scaling terrain attrition is intrinsic.** In obstacle-heavy worlds,
   defender terrain losses rise with swarm density (to ~16% at 50v40). TWO
@@ -97,6 +109,12 @@ The system was stress-tested against *learning* attackers, not just scripts:
 - **Split defense vs direct simultaneous raids** is the hardest case but now
   90–95% (was 74–81%; closed by direct-weighted training + distributed defender
   spawns). Saturation raids and single-target stay 100%.
+- **Multi-target defense is sensor-hungry.** Single-target tolerates cheap
+  sensing (98–100% even at 75 m detection), but split defense (K=3) collapses
+  under sensor degradation (74% at 150 m, 19% at 75 m) — defenders spread across
+  targets can't collectively cover a large area with short-range sensing. Split
+  defense in the field needs good sensor coverage (≥300 m-equiv / mocap); speed
+  disadvantage and mid-fight kills, by contrast, degrade gracefully at all K.
 - **No hardware flight yet** — the CrazyFlie path is validated in sim and dry-run;
   the cflib mocap loop is stubbed pending a real drone + motion-capture rig.
 - **Convoy + split are mutually exclusive** (moving multi-target is out of scope).
