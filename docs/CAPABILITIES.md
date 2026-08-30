@@ -38,19 +38,22 @@ zero leakers**. The ego-centric obs + allocator carry the policy far past its
 training range.
 
 ## 3. Multi-target split defense — protect 3 points at once (NEW)
-K=3 separated targets, `aegis_split` (superset of the single-target champion):
+K=3 separated targets, `aegis_splitdirect` (superset of the single-target champion):
 
 | Cell | vs saturation raids | vs direct simultaneous raids |
 |---|---|---|
-| 10v10 | 100% | 81% |
-| 15v15 | 100% | 78% |
-| 20v20 | 99% | 74% |
+| 10v10 | 99% | 83% |
+| 15v15 | 100% | 85% |
+| 20v20 | 100% | 83% |
 
 Split defense works, implemented with **zero allocator/interception change** —
-coverage emerges. Honest nuance: *saturation* raids (staggered arrival) are fully
-handled; *direct* raids (all attackers beeline all 3 targets at once) are harder
-(74–81%) because defenders must commit to targets early. `aegis_split` retains
-**100% at K=1** — a strict superset, no regression.
+coverage emerges. `aegis_splitdirect` retains **100% at K=1** (strict superset).
+Honest nuance: *saturation* raids (staggered) are fully handled; *direct* raids
+(all attackers rush all 3 targets at once) are the hardest case (83–85%, up from
+74–81% after direct-weighted fine-tuning). The residual gap is **structural** —
+defenders spawn clustered near the target centroid and can't pre-position across
+3 spread points fast enough against an all-at-once rush; the lever to close it is
+distributed defender spawns, not more training.
 
 ## 4. CrazyFlie deployment — sim-to-real ready
 The `aegis_adv_defender_cf_lab` model + `deploy/cf_bridge.py` bring the policy to
@@ -88,8 +91,10 @@ The system was stress-tested against *learning* attackers, not just scripts:
   low density but *doubled* losses at high density — caution backfires in crowded
   arenas. Wins stay ~100% regardless (interceptors absorb it). A real fix would be
   structural (fewer obstacles / inter-drone spacing), not caution-tuning.
-- **Split defense vs direct simultaneous raids** dips to ~74–81% — the one
-  scenario where committing defenders to targets early matters.
+- **Split defense vs direct simultaneous raids** is the hardest case (~83–85%
+  after targeted fine-tuning, up from 74–81%). The residual is structural
+  (centroid-clustered spawns vs an all-at-once rush on spread points); closing it
+  further needs distributed defender spawns, not more training.
 - **No hardware flight yet** — the CrazyFlie path is validated in sim and dry-run;
   the cflib mocap loop is stubbed pending a real drone + motion-capture rig.
 - **Convoy + split are mutually exclusive** (moving multi-target is out of scope).
@@ -97,7 +102,7 @@ The system was stress-tested against *learning* attackers, not just scripts:
 ## Champions (all in `models/`, browse via `python -m eval.launcher`)
 | Model | Role |
 |---|---|
-| `aegis_split` | **primary** — single + 3-target defense, 1v1→50v40 |
+| `aegis_splitdirect` | **primary** — single + 3-target defense (direct-raid-hardened), 1v1→50v40 |
 | `aegis_big24` | 24v24-trained scale generalist |
 | `aegis_adv_defender_cf_lab` | CrazyFlie deployment (hardened, minimal obs) |
 | `aegis_convoy` | moving-target escort |
