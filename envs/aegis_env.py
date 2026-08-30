@@ -444,13 +444,18 @@ class AegisSwarmEnv(VecEnv):
 
         base = w * self._num_drones
         # Defenders: ring around target; unused slots parked high in a corner.
+        # Multi-target (K>1): distribute defenders across the K targets (round-
+        # robin) so the swarm pre-positions to cover spread points against an
+        # all-at-once rush. K=1 -> centre = target_pos, bit-identical.
         for d in range(self.n_max):
             if d < n:
+                centre = (self.target_pos[w] if self.K == 1
+                          else self.targets[w, d % self.K])
                 ang = rng.uniform(0, 2 * np.pi)
                 dist = rng.uniform(*c.defender_dist_range)
                 self._init_pos_np[base + d] = (
-                    self.target_pos[w, 0] + dist * np.cos(ang),
-                    self.target_pos[w, 1] + dist * np.sin(ang),
+                    centre[0] + dist * np.cos(ang),
+                    centre[1] + dist * np.sin(ang),
                     rng.uniform(*c.defender_alt_range),
                 )
             else:
