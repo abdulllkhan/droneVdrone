@@ -98,6 +98,9 @@ class AegisConfig:
 
     # Sensing (global shared detection, latched once seen)
     sensor_range: float = 350.0        # 0 = unlimited
+    # Per-world sensor-range randomization (train detection robustness). Default
+    # (0,0) -> use the fixed sensor_range. e.g. (100,350) samples per world.
+    sensor_range_range: tuple = (0.0, 0.0)
     obs_noise_std: float = 0.0
     obs_opportunistic: bool = True     # 8-dim nearest-other-attacker block
     obs_zero_pip: bool = False         # zero PIP hint [22:25] (train-time knockout
@@ -323,6 +326,8 @@ class AegisSwarmEnv(VecEnv):
         self.K = max(1, c.target_count_range[1] if self._var_k else c.num_targets)
         self.targets = np.zeros((W, self.K, 3), dtype=np.float32)  # protected points
         self.k_w = np.full(W, self.K, dtype=np.int64)             # real count per world
+        self._var_sensor = c.sensor_range_range[1] > 0
+        self.sensor_w = np.full(W, c.sensor_range, dtype=np.float32)  # per-world range
         self.att_target = np.zeros((W, self.m_max), dtype=np.int64)  # each attacker's target idx
         self.n_w = np.full(W, N, dtype=np.int64)
         self.m_w = np.full(W, M, dtype=np.int64)
@@ -446,6 +451,8 @@ class AegisSwarmEnv(VecEnv):
         # pad unused slots with a far corner so they're never nearest / assigned
         if kw < self.K:
             self.targets[w, kw:] = (c.arena_bounds * 4, c.arena_bounds * 4, alt)
+        if self._var_sensor:
+            self.sensor_w[w] = rng.uniform(*c.sensor_range_range)
         # attackers split across the REAL targets round-robin (shuffled)
         perm = rng.permutation(self.m_max)
         self.att_target[w, perm] = np.arange(self.m_max) % kw
@@ -695,16 +702,16 @@ class AegisSwarmEnv(VecEnv):
     # ------------------------------------------------------------------ #
 
     def _update_detection(self):
-        """Latched global shared detection: any alive defender within sensor range."""
-        c = self.cfg
-        if c.sensor_range <= 0:
-            newly = self.att_active & ~self.att_detected
-        else:
-            diff = self.att_pos[:, None, :, :] - self.def_pos[:, :, None, :]
-            dist = np.linalg.norm(diff, axis=-1)                       # (W, N, M)
-            dist[~self.def_alive] = np.inf
-            seen = (dist <= c.sensor_range).any(axis=1)                # (W, M)
-            newly = seen & self.att_active & ~self.att_detected
+        """Latched global shared detection: any alive defender within sensor range.
+        Per-world sensor_w (<=0 = unlimited); bit-identical when uniform."""
+        diff = self.att_pos[:, None, :, :] - self.def_pos[:, :, None, :]
+        dist = np.linalg.norm(diff, axis=-1)                          # (W, N, M)
+        dist[~self.def_alive] = np.inf
+        seen = (dist <= self.sensor_w[:, None, None]).any(axis=1)     # (W, M)
+        unlim = self.sensor_w <= 0
+        if unlim.any():
+            seen[unlim] = self.att_active[unlim]
+        newly = seen & self.att_active & ~self.att_detected
         if newly.any():
             self.att_detected |= newly
             self.realloc_needed |= newly.any(axis=1)
