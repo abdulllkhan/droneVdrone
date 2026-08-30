@@ -1,0 +1,11 @@
+=== 2026-08-29 21:11:55 START SC_single
+=== 2026-08-29 21:12:23 END(exit=0) SC_single
+=== 2026-08-29 21:12:23 START SC_scale
+=== 2026-08-29 21:12:52 END(exit=0) SC_scale
+=== 2026-08-29 21:12:52 START SC_split
+=== 2026-08-29 21:13:11 END(exit=0) SC_split
+=== 2026-08-29 21:13:11 START SC_cflab
+=== 2026-08-29 21:13:29 END(exit=0) SC_cflab
+=== 2026-08-29 21:13:29 START SC_dash
+=== 2026-08-29 21:13:29 END(exit=0) SC_dash
+=== 2026-08-29 21:13:29 SCORECARD_DONE queue
