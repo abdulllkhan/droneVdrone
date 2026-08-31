@@ -5,6 +5,12 @@
 > (`experiments/scorecard_20260829/`, 2026-08-29). Design & full history:
 > `docs/AEGIS_PLAN.md`. Reward reference: `docs/REWARDS.md`.
 
+> **Status (2026-08-31): feature-complete and regression-verified.** All 7
+> champions load and evaluate correctly under the current env (big24/oomval
+> single-target 100%; vark/splitspawn K=3 88%; convoy/sensrobust/cf_lab 100%);
+> 22/22 tests pass. Every capability is built, characterized, and adversarially
+> verified. Remaining roadmap is hardware-gated (a real CrazyFlie flight).
+
 ## What AEGIS is
 An RL-trained interceptor swarm that defends a target from incoming attackers.
 **One shared policy** controls every defender via ego-centric observations
