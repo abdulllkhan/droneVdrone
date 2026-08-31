@@ -83,8 +83,11 @@ The system was stress-tested against *learning* attackers, not just scripts:
   and need an adversarial hardening pass; large-team policies (≥4-per-side)
   inherit robustness structurally (redundancy leaves no consistent seam).
 - cf_lab's real 0.19-breach gap was found and **closed** in one co-training round
-  (→ the hardened deployment model). The large/convoy champions showed **no gap**
-  on the first adversarial pass. Hardening transfers through warm-starts.
+  (→ the hardened deployment model). The large, convoy, and **multi-target
+  (aegis_vark, K=3)** champions all showed **no gap** on the first adversarial
+  pass (a learned attacker gets ≤0.01 breach vs split defense — less than
+  scripted). Hardening transfers through warm-starts; the robustness rule extends
+  over target count as well as team size.
 - The population loop converged (attacker exploit sizes 0.75 → 0.46 → 0.094).
 
 ## Model selection guide

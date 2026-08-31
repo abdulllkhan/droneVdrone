@@ -1,0 +1,15 @@
+=== 2026-08-30 21:12:11 START A_varkadv_cotrain
+=== 2026-08-30 21:16:23 END(exit=137) A_varkadv_cotrain
+=== 2026-08-30 21:16:23 START B_evals
+=== 2026-08-30 21:16:31 END(exit=0) B_evals
+=== 2026-08-30 21:16:31 START C_dash
+=== 2026-08-30 21:16:31 END(exit=0) C_dash
+=== 2026-08-30 21:16:31 VARKADV_DONE queue
+=== 2026-08-30 21:18:12 RESTART at 256 worlds (evade-mode OOM'd at 512)
+=== 2026-08-30 21:18:12 START A_varkadv_cotrain
+=== 2026-08-30 21:26:41 END(exit=0) A_varkadv_cotrain
+=== 2026-08-30 21:26:41 START B_evals
+=== 2026-08-30 21:26:56 END(exit=0) B_evals
+=== 2026-08-30 21:26:56 START C_dash
+=== 2026-08-30 21:26:56 END(exit=0) C_dash
+=== 2026-08-30 21:26:56 VARKADV_DONE queue
