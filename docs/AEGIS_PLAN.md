@@ -320,6 +320,86 @@ Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
+**MULTI-TARGET SPLIT DEFENSE (2026-08-29, DD-17)** — NEW CAPABILITY, see
+`experiments/split_20260829/results.md`. The swarm now protects K separate points
+at once (num_targets config; K=1 bit-identical, 22/22 tests). Implemented with
+ZERO allocator/interception change — defenders follow assigned attackers, which
+now head to different points, so coverage emerges. `aegis_split` (K=3 fine-tune)
+= 0.90 win / 4.5% attrition defending 3 points, beats big24 zero-shot (0.87 /
+8.4%), and retains **1.00 at K=1 (no regression — a strict superset)**. big24
+also generalizes to split zero-shot (0.87), another payoff of the ego-centric
+design. Renderer draws all targets; GIF aegis_split3_15v15.
+
+**SPEED-BRAKE A/B + ATTRITION VERDICT (2026-08-29, DD-17)** — see
+`experiments/brake_20260829/results.md`. A physical obstacle speed-brake
+(dynamics, not reward) was meant to be density-invariant — it FAILED the same
+way as shaping, worse: −4pt attrition @20v20 but **+20pt @50v40** (braked
+defenders perpetually slowed in crowded arenas → more collisions). **Two
+independent mechanisms (reward shaping, physical brake) now confirm: terrain
+attrition at high density is NOT a caution-tuning problem** — caution backfires
+when crowded, and win stays ~100% regardless (reusable interceptors absorb it).
+Attrition-at-density is an intrinsic cost; the lever (if ever needed) is
+STRUCTURAL (fewer obstacles / inter-drone spacing), not shaping. Kept big24.
+Brake code retained (default off) for ≤20v20 terrain ops. Ops: 448-world AEGIS
+OOMs when the concurrent non-AEGIS `dev/probe_gemma_robust.py` shares the box —
+use ≤256 worlds when sharing.
+
+**SAFETY-SHAPING A/B (2026-08-29, DD-17)** — see
+`experiments/safety_20260829/results.md`. Stronger safety (r_safety_coeff −0.15,
+danger radius 110) is a DENSITY-DEPENDENT TRADEOFF, not a win: cuts attrition
+−3pt at trained density (10-20v20) but +11pt at 50v40 (over-avoidance piles up
+crowded arenas). **Kept big24 as champion — did NOT adopt.** Lesson: safety
+shaping tuned at one density doesn't transfer; attrition needs a density-invariant
+mechanism (obstacle-relative speed limit / danger-radius curriculum), not a fixed
+stronger coeff. `aegis_safe` kept for ~10-20v20-density terrain ops only.
+
+**BIG-SWARM SCALE-UP (2026-08-29, DD-17)** — see
+`experiments/bigswarm_20260829/results.md`. First run on the lifted cap: a
+**24v24 generalist at 448 worlds** (champion `aegis_big24`). Trained range
+15v15–24v24 = 100% win / zero leakers all terrains. **Generalizes UP with zero
+extra training: 30v30, 40v40, 50v40 all 100%, and outnumbered 20v40 (2:1) at
+100% zero-leaker** (reusable interceptors re-engage). Size-invariance now proven
+1v1→50v40 across the model family. Bad-death rises with density (16% @ 50v40) —
+survival-bonus shaping is the lever if needed.
+
+**OOM FIXED — FULL 512 WORLDS RESTORED (2026-08-29, DD-17)** — see
+`experiments/oomfix_20260829/results.md`. The recurring exit-137 was GPU-buffer
+allocation churn (fresh wp.array every step/reset), not RAM. Fix (commit
+29a874d): preallocate + `.assign()` in-place, bit-identical (21/21 tests). The
+512-world/n_max=20 config that died 4× now runs clean (RAM flat ~12 GB, gate
+win 0.97; bonus champion aegis_oomval: maze/scale 1.00 incl. 50v40). **The
+≤256-world cap is LIFTED** — full 512 worlds (~2× parallelism) available for all
+future large runs.
+
+**CONVOY ADVERSARIAL VERIFICATION (2026-08-29, DD-17)** — see
+`experiments/convoyadv_20260829/results.md`. Learned attackers vs the frozen
+moving-target escort: **no gap** (true_breach 0.077 < 0.08; grid 0.89 win / 0.016
+breach on 10 m/s targets). Escort is deployment-grade as-is. Emerging **rule**:
+small-team policies (cf_lab, 1–4) need an adversarial hardening pass; large-team
+policies (largeP, convoy, 4–20) inherit robustness structurally. Attacker kept
+for future pools; new GIF aegis_convoyadv_hills_8v10.
+
+**CRAZYFLIE ADVERSARIAL VERIFICATION (2026-08-28, DD-17)** — see
+`experiments/cfadv_20260828/results.md`. The small-team lab policy had a REAL
+adversarial gap (unlike the large generalist): learned attackers breached frozen
+cf_lab at 0.19 (evade gate). One co-training round closed it →
+**`aegis_adv_defender_cf_lab`** (win 0.96/breach 0.02 vs mixture; 0.991/0.005 vs
+adaptive RL in the grid harness; no scripted regression). **Ship the hardened
+model, not raw cf_lab.** Also: **`deploy/cf_bridge.py`** — the CrazyFlie mocap→
+policy→setpoint bridge (encoder test-verified bit-identical to sim, --dry-run
+flies 2v2 in 4.1 s; cflib path stubbed for first hardware flight). Recurring
+exit-137 = transient unified-memory spike, use ≤256 worlds.
+
+**NIGHT 2 (2026-08-28, branch DD-17): CRAZYFLIE-READY + CONVOY ESCORT** — see
+`experiments/night2_20260828/results.md`. **`aegis_cf_lab`** = validated lab
+policy via pure unit-mapping (L=125, T=√2 → 0.34 m/s / 3 m/s² / 8.49 Hz, minimal
+sensor obs): gate 1.00 on every N≥M small-team cell vs control's 0.82–0.98,
+mean breach 7× lower. **Convoy escort** shipped (moving target, terrain-aware
+wander): the ego-centric obs made escort free — static champion already 1.00 on
+10 m/s targets; convoy fine-tune matches with attrition 15.3%→10.7%. Next: cflib
+hardware bridge (first real CrazyFlie flight), n_max=20 OOM profiling (use ≤288
+worlds until fixed).
+
 **ROUND 2 (2026-08-27 03:58): CHAMPION = `aegis_largeP_stage3_realism_best`** —
 attrition-priced retrain (bad_death −60, safety −0.10): urban attrition 22.7%→
 **13.3%** at 1.00 win, training-time mixed-terrain attrition →0.047. Scripted

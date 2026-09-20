@@ -1,0 +1,58 @@
+[
+  {
+    "n": 40,
+    "m": 40,
+    "strategy": "direct",
+    "episodes": 20,
+    "win_rate": 1.0,
+    "breach_rate": 0.0,
+    "mean_leakers": 0.0,
+    "exchange_ratio": 6.956521739130435,
+    "bad_death_rate": 0.14375,
+    "terrain_kill_rate": 0.0,
+    "time_to_first_intercept_s": 1.4250000000000003,
+    "mean_length_s": 5.3
+  },
+  {
+    "n": 40,
+    "m": 40,
+    "strategy": "flanking",
+    "episodes": 20,
+    "win_rate": 1.0,
+    "breach_rate": 0.0,
+    "mean_leakers": 0.0,
+    "exchange_ratio": 7.766990291262136,
+    "bad_death_rate": 0.12875,
+    "terrain_kill_rate": 0.0,
+    "time_to_first_intercept_s": 1.4333333333333336,
+    "mean_length_s": 5.279166666666667
+  },
+  {
+    "n": 50,
+    "m": 40,
+    "strategy": "direct",
+    "episodes": 20,
+    "win_rate": 1.0,
+    "breach_rate": 0.0,
+    "mean_leakers": 0.0,
+    "exchange_ratio": 4.878048780487805,
+    "bad_death_rate": 0.164,
+    "terrain_kill_rate": 0.0,
+    "time_to_first_intercept_s": 1.4249999999999998,
+    "mean_length_s": 4.925
+  },
+  {
+    "n": 50,
+    "m": 40,
+    "strategy": "flanking",
+    "episodes": 20,
+    "win_rate": 1.0,
+    "breach_rate": 0.0,
+    "mean_leakers": 0.0,
+    "exchange_ratio": 5.442176870748299,
+    "bad_death_rate": 0.147,
+    "terrain_kill_rate": 0.0,
+    "time_to_first_intercept_s": 1.4416666666666664,
+    "mean_length_s": 4.920833333333333
+  }
+]

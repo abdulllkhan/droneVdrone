@@ -298,6 +298,112 @@ def test_reassignment_is_reward_neutral(small_env):
 
 
 @needs_cuda
+def test_moving_target_convoy():
+    """Target advances at the configured speed, stays in bounds and clear of
+    terrain kill zones, keeps exact prev-frame bookkeeping, and attackers can
+    still breach it. Defaults elsewhere stay static (test_env_step_invariants
+    is the bit-identical regression for that)."""
+    import warp as wp
+    wp.init()
+    from envs.aegis_env import AegisSwarmEnv, AegisConfig
+    env = AegisSwarmEnv(2, AegisConfig(
+        n_max=2, m_max=2, fixed_nm=(2, 2), n_range=(2, 2), m_range=(2, 2),
+        terrain="hills", num_obstacles=3, kamikaze=False,
+        target_speed_range=(10.0, 10.0), seed=11))
+    env.reset()
+    max_step = 10.0 / 12.0 + 1e-3
+    breaches = 0
+    prev = env.target_pos.copy()
+    for i in range(400):
+        env.step_async(np.zeros((env.n_envs, 3), dtype=np.float32))
+        env.step_wait()
+        for w in range(2):
+            if env.step_count[w] > 1:   # same episode as last step
+                d = np.linalg.norm(env.target_pos[w, :2] - prev[w, :2])
+                assert d <= max_step + 1e-6
+                assert np.allclose(env.target_pos_prev[w], prev[w], atol=1e-5)
+            r = np.linalg.norm(env.target_pos[w, :2])
+            assert r <= env.cfg.target_wander_radius + env.cfg.target_waypoint_tol + 1.0
+            H = int(env.hill_count[w])
+            if H:
+                hd = np.linalg.norm(
+                    env.obstacle_pos[w, :H, :2] - env.target_pos[w, :2][None], axis=-1)
+                assert hd.min() > 55.0   # never inside a kill shell
+        prev = env.target_pos.copy()
+        for o in env.pop_outcomes():
+            breaches += o["breaches"]
+    assert breaches > 0, "attackers never breached a moving target"
+    env.close()
+
+
+@needs_cuda
+def test_cf_bridge_encoder_matches_env():
+    """The deployment ObsEncoder must be bit-compatible with the sim's defender
+    obs — encoder/env drift is the #1 sim-to-real failure mode."""
+    import warp as wp
+    wp.init()
+    from envs.aegis_env import AegisSwarmEnv, AegisConfig
+    from deploy.cf_bridge import ObsEncoder
+    env = AegisSwarmEnv(1, AegisConfig(
+        n_max=3, m_max=3, fixed_nm=(3, 3), n_range=(3, 3), m_range=(3, 3),
+        terrain="none", num_obstacles=0, wind_enabled=False, sensor_range=0.0,
+        kamikaze=False, obs_opportunistic=False, obs_zero_pip=True,
+        obs_noise_std=0.0, seed=9))
+    env.reset()
+    rng = np.random.default_rng(0)
+    for _ in range(40):
+        env.step_async(rng.uniform(-1, 1, (env.n_envs, 3)).astype(np.float32))
+        env.step_wait()
+    enc = ObsEncoder(3, 3)
+    enc.assign = env.assign.copy()
+    enc.stations = env.stations.copy()
+    enc.steps_since_reassign = env.steps_since_reassign - 1  # encode() adds 1
+    enc.step = 1                                             # skip internal realloc
+    obs = enc.encode(env.def_pos.copy(), env.def_vel.copy(),
+                     env.att_pos.copy(), env.att_vel.copy(),
+                     env.def_alive.copy(), env.att_active.copy(),
+                     env.target_pos.copy())
+    ref = env.def_obs_buf.reshape(3, 56)
+    diff = np.abs(obs - ref)
+    assert diff.max() < 2e-5, f"encoder drift: max diff {diff.max():.2e} at dim {int(np.unravel_index(diff.argmax(), diff.shape)[1])}"
+    env.close()
+
+
+@needs_cuda
+def test_multitarget_split_defense():
+    """K=3 split defense: attackers spread across targets, each breaches its own,
+    obs stays finite/56-dim, and at least two distinct targets get breached."""
+    import warp as wp
+    wp.init()
+    from envs.aegis_env import AegisSwarmEnv, AegisConfig
+    env = AegisSwarmEnv(4, AegisConfig(
+        n_max=6, m_max=9, fixed_nm=(6, 9), n_range=(6, 6), m_range=(9, 9),
+        terrain="none", num_obstacles=0, wind_enabled=False, kamikaze=False,
+        num_targets=3, target_spread=180.0, seed=5))
+    obs = env.reset()
+    assert obs.shape == (24, 56) and np.isfinite(obs).all()
+    # attackers are split across all 3 targets
+    for w in range(4):
+        assert set(env.att_target[w, :9].tolist()) == {0, 1, 2}, env.att_target[w]
+    # targets are genuinely separated (not stacked at origin)
+    for w in range(4):
+        d01 = np.linalg.norm(env.targets[w, 0, :2] - env.targets[w, 1, :2])
+        assert d01 > 80.0
+    breached_targets = set()
+    for _ in range(400):
+        env.step_async(np.zeros((env.n_envs, 3), dtype=np.float32))  # passive defenders
+        env.step_wait()
+        assert np.isfinite(env.obs_buf).all()
+        for w in range(4):
+            for a in np.nonzero(env.att_breached[w, :9])[0]:
+                breached_targets.add((w, int(env.att_target[w, a])))
+    # with passive defenders, attackers reach their targets across >=2 distinct points
+    distinct = {t for (_, t) in breached_targets}
+    assert len(distinct) >= 2, f"only targets {distinct} breached"
+    env.close()
+
+
+@needs_cuda
 def test_obs_contract_across_sizes():
     import warp as wp
     wp.init()
