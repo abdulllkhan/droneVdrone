@@ -128,7 +128,9 @@ moving targets) where they were each validated.
   detection range to the distance between protected points.** Speed disadvantage
   and mid-fight kills, by contrast, degrade gracefully at all K.
 - **No hardware flight yet** — the CrazyFlie path is validated in sim and dry-run;
-  the cflib mocap loop is stubbed pending a real drone + motion-capture rig.
+  mocap sources (UDP/Lighthouse/Qualisys), the cflib command path and the
+  safety layer are wired and socket-tested (`docs/FIRST_FLIGHT.md`), pending a
+  real drone + rig.
 - **Convoy + split are mutually exclusive** (moving multi-target is out of scope).
 
 ## Champions (all in `models/`, browse via `python -m eval.launcher`)
