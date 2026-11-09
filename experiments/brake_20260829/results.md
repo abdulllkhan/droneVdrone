@@ -38,3 +38,13 @@ formation-aware allocator), not caution.
 448-world AEGIS OOMs (exit 137) when the concurrent non-AEGIS process
 `dev/probe_gemma_robust.py` shares the box — retried clean at 256 worlds. Use
 ≤256 worlds when sharing the GPU.
+
+## Erratum (2026-10-12)
+
+The scale rows (40v40–50v40) ran without `--realism`, so they contained no obstacles and
+the brake, which acts only near an obstacle surface, never engaged. The 34.5% bad-death
+rate there is ground, ceiling or boundary crashes of the brake-trained policy. The
+explanation that braked defenders were "perpetually slowed" near obstacles in crowded
+arenas, and the conclusion that high-density terrain attrition is intrinsic, are not
+supported by this experiment; the "20v20" and "50v40" columns of the pattern table
+compare a five-hill test with an obstacle-free one.

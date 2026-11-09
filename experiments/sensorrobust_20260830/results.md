@@ -36,3 +36,13 @@ constraint, not a tuning target. Single-target defense has no such issue
 Adopt `aegis_sensrobust` as a marginally-more-sensor-robust multi-target variant
 (80% vs 74% at 150 m, no K=1 regression), but the deliverable is the FINDING: the
 sensor-vs-spacing floor. aegis_vark remains fine for good-sensing deployments.
+
+## Erratum (2026-10-12)
+
+- The baseline row is 300 m, not 350 m: the evaluation used `--realism`, which sets a
+  300 m detection range (training sampled 80–350 m).
+- `target_spread=180` is the placement radius, not the spacing: the three points sit
+  126–180 m from the centre, about 120° apart, and are typically 230–300 m apart. 150 m
+  sensing is therefore about half the spacing rather than "near the threshold". The
+  qualitative conclusion, that detection range should be comparable to the spacing
+  between protected points, stands.

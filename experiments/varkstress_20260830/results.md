@@ -34,3 +34,9 @@ distant targets go undetected until too late.
   or strong onboard sensing — not the minimal suite. This is a real constraint,
   now documented, that the verification pass surfaced before any deployment.
 - Not sensor-related: speed parity and kill injection are fine at all K.
+
+## Erratum (2026-10-12)
+
+- With `target_spread=180` the three points sit 126–180 m from the centre and are
+  typically 230–300 m apart, not 180 m apart.
+- All rows used `--realism`, so the baseline detection range is 300 m.

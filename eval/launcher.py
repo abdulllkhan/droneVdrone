@@ -2,11 +2,13 @@
 Interactive Model Launcher — browse and watch all trained models.
 
 A Pygame-based UI that:
-  - Scans models/ for all trained .zip files
+  - Scans models/ for all trained .zip files (+ AEGIS models/aegis_*/best_model.zip)
   - Groups them by training phase (swarm, adversarial, etc.)
   - Shows model details (size, date, obs dim, architecture)
-  - Lets you pick a mode (Watch Swarm, Spawn, 1v1 Watch)
-  - Launches the appropriate game with the selected model
+  - Lets you pick a mode (Watch Swarm, Spawn, 1v1 Watch; AEGIS: Watch, Small
+    Team, Large Swarm)
+  - Launches the appropriate viewer: AEGIS (PPO) models -> eval.aegis_viewer,
+    legacy SAC models -> eval.game
 
 Usage:
     python -m eval.launcher
@@ -17,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 import time
 from datetime import datetime
 from pathlib import Path
@@ -24,7 +27,12 @@ from pathlib import Path
 import numpy as np
 import pygame
 
+from eval.aegis_common import CHAMPIONS, model_name, model_profile, paired_defender
+
 MODELS_DIR = Path("models")
+
+LEGACY_MODES = ("Watch Swarm", "Interactive Spawn", "1v1 Watch")
+AEGIS_MODES = ("Watch", "Small Team", "Large Swarm")
 
 # --- Colors ---
 BG = (18, 18, 24)
@@ -51,9 +59,17 @@ CATEGORY_BG = (30, 35, 50)
 DIVIDER = (45, 45, 60)
 
 
+def is_aegis(name):
+    return "aegis_" in name.lower()
+
+
 def categorize_model(name):
     """Assign a category to a model based on filename patterns."""
     n = name.lower()
+    if is_aegis(n):
+        if n in CHAMPIONS:
+            return "AEGIS Champions"
+        return "AEGIS RL Attackers" if "attacker" in n else "AEGIS (other)"
     if "swarm_15v10" in n and "300m" in n:
         return "Swarm 15v10 (300m)"
     if "swarm_15v10" in n:
@@ -82,8 +98,10 @@ def categorize_model(name):
 
 
 def detect_model_type(name):
-    """Detect whether this is a swarm, 1v1, attacker, or defender model."""
+    """Detect whether this is a swarm, 1v1, attacker, defender, or AEGIS model."""
     n = name.lower()
+    if is_aegis(n):
+        return "aegis_attacker" if "attacker" in n else "aegis"
     if "swarm" in n:
         return "swarm"
     if "attacker" in n:
@@ -127,12 +145,13 @@ class ModelInfo:
     """Metadata about a trained model."""
     def __init__(self, path):
         self.path = path
-        self.name = path.stem
+        self.name = model_name(path)          # models/<dir>/best_model.zip -> <dir>
         self.filename = path.name
         self.category = categorize_model(self.name)
         self.model_type = detect_model_type(self.name)
         self.is_realistic = is_realistic(self.name)
         self.stage = get_stage_name(self.name)
+        self.profile = model_profile(path) if self.is_aegis else None
 
         # File metadata
         stat = path.stat()
@@ -142,8 +161,59 @@ class ModelInfo:
         # Swarm config
         if self.model_type == "swarm":
             self.n_def, self.n_att = parse_swarm_config(self.name)
+        elif self.profile:
+            self.n_def, self.n_att = self.profile["nm"]
         else:
             self.n_def, self.n_att = 1, 1
+
+    @property
+    def is_aegis(self):
+        return self.model_type in ("aegis", "aegis_attacker")
+
+
+def modes_for(model):
+    return AEGIS_MODES if model.is_aegis else LEGACY_MODES
+
+
+def build_command(model, mode, python=None):
+    """ModelInfo + mode label -> argv. AEGIS (PPO) models open the live
+    eval.aegis_viewer (an RL attacker plays vs its paired defender); legacy
+    SAC models keep the original eval.game command."""
+    cmd = [python or sys.executable]
+    if model.is_aegis:
+        prof = model.profile
+        cmd += ["-m", "eval.aegis_viewer"]
+        if prof["attacker"]:
+            cmd += ["--model", paired_defender(model.path), "--attacker-model", str(model.path)]
+        else:
+            cmd += ["--model", str(model.path)]
+        if mode == "Small Team":
+            (n_lo, n_hi), (m_lo, m_hi) = prof["n_lim"], prof["m_lim"]
+            cmd += ["--nm", f"{min(max(3, n_lo), n_hi)}x{min(max(3, m_lo), m_hi)}"]
+        elif mode == "Large Swarm":
+            cmd += ["--nm", "%dx%d" % prof["nm_large"]]
+        return cmd
+
+    cmd += ["-m", "eval.game"]
+    if mode == "Watch Swarm":
+        cmd += ["--mode", "swarm"]
+        cmd += ["--defender", str(model.path)]
+        cmd += ["--defenders", str(model.n_def)]
+        cmd += ["--attackers", str(model.n_att)]
+        if model.is_realistic:
+            cmd += ["--realistic"]
+        cmd += ["--strategy", "mixed"]
+
+    elif mode == "Interactive Spawn":
+        cmd += ["--mode", "spawn"]
+        cmd += ["--defender", str(model.path)]
+        if model.is_realistic:
+            cmd += ["--realistic"]
+
+    elif mode == "1v1 Watch":
+        cmd += ["--mode", "watch"]
+        cmd += ["--defender", str(model.path)]
+    return cmd
 
 
 class Launcher:
@@ -166,8 +236,8 @@ class Launcher:
         self.hovered_idx = -1
         self.scroll_offset = 0
         self.max_scroll = 0
-        self.mode_idx = 0  # 0=Watch Swarm, 1=Spawn, 2=1v1 Watch
-        self.modes = ["Watch Swarm", "Interactive Spawn", "1v1 Watch"]
+        self.mode_idx = 0  # 0=Watch Swarm, 1=Spawn, 2=1v1 Watch (AEGIS: AEGIS_MODES)
+        self.modes = list(LEGACY_MODES)
         self.launching = False
         self.status_msg = ""
         self.status_time = 0
@@ -194,15 +264,21 @@ class Launcher:
         if not MODELS_DIR.exists():
             return
 
-        for p in sorted(MODELS_DIR.glob("*.zip")):
+        # AEGIS champions live in models/aegis_*_best/best_model.zip
+        paths = (sorted(MODELS_DIR.glob("*.zip")) +
+                 sorted(MODELS_DIR.glob("aegis_*/best_model.zip")))
+        for p in paths:
             info = ModelInfo(p)
             self.models.append(info)
             if info.category not in self.categories:
                 self.categories[info.category] = []
             self.categories[info.category].append(info)
+        if "AEGIS Champions" in self.categories:
+            self.categories["AEGIS Champions"].sort(key=lambda m: CHAMPIONS.index(m.name))
 
         # Sort categories by priority
         cat_order = [
+            "AEGIS Champions", "AEGIS (other)", "AEGIS RL Attackers",
             "Swarm 15v10 (300m)", "Swarm 15v10", "Swarm 3v3", "Swarm 2v2",
             "Swarm (other)", "Adversarial", "Mix Training",
             "Phase 3 (Intercept)", "Phase 2 (Chase)", "Phase 1 (Fly)",
@@ -294,8 +370,9 @@ class Launcher:
                         self.collapsed.add(data)
                 elif rtype == "model":
                     self.selected = data
+                    self.modes = list(modes_for(data))
                     # Auto-select appropriate mode
-                    if data.model_type == "swarm":
+                    if data.is_aegis or data.model_type == "swarm":
                         self.mode_idx = 0
                     elif data.model_type == "attacker":
                         self.mode_idx = 2
@@ -329,26 +406,7 @@ class Launcher:
 
         model = self.selected
         mode = self.modes[self.mode_idx]
-        cmd = [sys.executable, "-m", "eval.game"]
-
-        if mode == "Watch Swarm":
-            cmd += ["--mode", "swarm"]
-            cmd += ["--defender", str(model.path)]
-            cmd += ["--defenders", str(model.n_def)]
-            cmd += ["--attackers", str(model.n_att)]
-            if model.is_realistic:
-                cmd += ["--realistic"]
-            cmd += ["--strategy", "mixed"]
-
-        elif mode == "Interactive Spawn":
-            cmd += ["--mode", "spawn"]
-            cmd += ["--defender", str(model.path)]
-            if model.is_realistic:
-                cmd += ["--realistic"]
-
-        elif mode == "1v1 Watch":
-            cmd += ["--mode", "watch"]
-            cmd += ["--defender", str(model.path)]
+        cmd = build_command(model, mode)
 
         self.status_msg = f"Launching: {' '.join(cmd[-6:])}"
         self.status_time = time.time()
@@ -463,8 +521,13 @@ class Launcher:
                     badge = self.font_sm.render(model.stage, True, badge_color)
                     self.screen.blit(badge, (self.list_x + 24, cy + 17))
 
-                # Realistic badge
-                if model.is_realistic:
+                # Realistic / AEGIS badge
+                if model.is_aegis:
+                    label = "RL ATT" if model.profile["attacker"] else (
+                        "LAB" if model.profile["lab"] else "AEGIS")
+                    r_badge = self.font_sm.render(label, True, ACCENT)
+                    self.screen.blit(r_badge, (self.list_x + self.list_w - 100, cy + 17))
+                elif model.is_realistic:
                     r_badge = self.font_sm.render("300m", True, YELLOW)
                     self.screen.blit(r_badge, (self.list_x + self.list_w - 100, cy + 17))
 
@@ -509,14 +572,36 @@ class Launcher:
         y += 15
 
         # Details
-        details = [
-            ("Category", model.category, ACCENT),
-            ("Type", model.model_type.capitalize(), TEXT),
-            ("File", model.filename, TEXT_DIM),
-            ("Size", f"{model.size_mb:.1f} MB", TEXT),
-            ("Modified", model.modified.strftime("%Y-%m-%d %H:%M"), TEXT),
-            ("Arena", "300m realistic" if model.is_realistic else "8m small", YELLOW if model.is_realistic else TEXT),
-        ]
+        if model.is_aegis:
+            prof = model.profile
+            kind = "RL attacker (PPO)" if prof["attacker"] else "AEGIS swarm policy (PPO)"
+            arena = ("8x8 m lab (1:125 unit map)" if prof["lab"]
+                     else "1 km AEGIS arena")
+            details = [
+                ("Category", model.category, ACCENT),
+                ("Type", kind, TEXT),
+                ("File", str(model.path), TEXT_DIM),
+                ("Size", f"{model.size_mb:.1f} MB", TEXT),
+                ("Modified", model.modified.strftime("%Y-%m-%d %H:%M"), TEXT),
+                ("Arena", arena, YELLOW),
+                ("Profile", prof["label"], GREEN),
+                ("Default", f"{model.n_def}v{model.n_att} {prof['strategy']}, "
+                            f"{prof['terrain']}, {prof['num_targets']} target(s)"
+                            + (f", {prof['target_speed']:.0f} m/s" if prof["target_speed"] else ""),
+                 ACCENT),
+                ("Trained", prof["note"], TEXT_DIM),
+            ]
+            if prof["attacker"]:
+                details.append(("Versus", prof["defender"], RED))
+        else:
+            details = [
+                ("Category", model.category, ACCENT),
+                ("Type", model.model_type.capitalize(), TEXT),
+                ("File", model.filename, TEXT_DIM),
+                ("Size", f"{model.size_mb:.1f} MB", TEXT),
+                ("Modified", model.modified.strftime("%Y-%m-%d %H:%M"), TEXT),
+                ("Arena", "300m realistic" if model.is_realistic else "8m small", YELLOW if model.is_realistic else TEXT),
+            ]
         if model.stage:
             details.append(("Stage", model.stage, GREEN))
         if model.model_type == "swarm":
@@ -560,16 +645,20 @@ class Launcher:
         launch_surf = self.font_lg.render(launch_text, True, TEXT_BRIGHT)
         self.screen.blit(launch_surf, (x + (launch_w - launch_surf.get_width()) // 2, launch_y + 15))
 
-        # Subtitle with command hint
+        # Subtitle with command hint (AEGIS commands carry full paths: wrap them)
         cmd_hint = self._get_cmd_hint()
-        hint_surf = self.font_sm.render(cmd_hint, True, TEXT_DIM)
-        self.screen.blit(hint_surf, (x, launch_y + 62))
+        width = max(20, (self.detail_w - 40) // max(1, self.font_sm.size("M")[0]))
+        for i, part in enumerate(textwrap.wrap(cmd_hint, width)[:2]):
+            hint_surf = self.font_sm.render(part, True, TEXT_DIM)
+            self.screen.blit(hint_surf, (x, launch_y + 62 + 16 * i))
 
     def _get_cmd_hint(self):
         if not self.selected:
             return ""
         model = self.selected
         mode = self.modes[self.mode_idx]
+        if model.is_aegis:
+            return " ".join(build_command(model, mode)[2:])
         if mode == "Watch Swarm":
             return f"eval.game --mode swarm --defender {model.filename} --defenders {model.n_def} --attackers {model.n_att}"
         elif mode == "Interactive Spawn":

@@ -32,3 +32,13 @@ champion did, now with more headroom for future work (deeper population loops,
 ## Artifacts
 Champion `aegis_big24`; replay `aegis_big24_24v24.gif` (a 48-drone battle). No
 OOM at 448 worlds / n_max=24 — the fix holds at the new scale.
+
+## Erratum (2026-10-12)
+
+- The trained-range evaluation (15v15–24v24) used the realism setting, which places
+  five hills; urban and maze terrain were not evaluated here.
+- The scale evaluation (30v30–50v40, 20v40) ran without `--realism`, so it had no
+  obstacles (`num_obstacles` defaults to 0). The 11–16% bad-death rates in that table
+  are ground, ceiling or boundary crashes, not obstacle collisions, and they do not show
+  attrition rising with density in obstacle worlds. `aegis_split` lost no defenders in
+  the same open-field cells (scorecard, 2026-08-29).

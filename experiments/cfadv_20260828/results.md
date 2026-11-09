@@ -37,3 +37,8 @@ Third exit-137 kill this project, at 512 worlds / n_max=4 with only 22 GB RAM
 used → transient unified-memory (VRAM+RAM shared pool) spike, NOT steady
 exhaustion. Mitigation in place: ≤256 worlds. Root-cause profiling remains a
 heartbeat todo.
+
+## Erratum (2026-10-12)
+
+"18 cells incl. 1v3" is 9 cells (1v1, 2v1, 2v2, 3v1, 3v2, 3v3, 1v2, 2v3, 1v3) × 2 raid
+types (direct, jink), 200 episodes each.

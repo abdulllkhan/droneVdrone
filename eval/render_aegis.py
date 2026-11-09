@@ -11,43 +11,22 @@ import os
 
 import numpy as np
 
+from eval.aegis_common import env_kwargs, frame, load_policy, make_env, world_meta
+
 
 def rollout(model_path, n, m, kamikaze, strategy, realism, seed, terrain="hills",
             target_speed=0.0, num_targets=1):
-    import warp as wp
-    wp.init()
-    from stable_baselines3 import PPO
-    from envs.aegis_env import AegisSwarmEnv, AegisConfig
-
-    kw = dict(n_max=n, m_max=m, fixed_nm=(n, m), n_range=(n, n), m_range=(m, m),
-              kamikaze=kamikaze, attacker_strategies=(strategy,), seed=seed,
-              terrain=terrain, num_targets=num_targets,
-              target_speed_range=(target_speed, target_speed))
-    if realism:
-        kw.update(num_obstacles=5, wind_enabled=True, wind_max_force=0.5,
-                  wind_gust_prob=0.01, wind_gust_force=1.5, sensor_range=300.0)
-    env = AegisSwarmEnv(num_worlds=1, config=kw and AegisConfig(**kw))
-    model = PPO.load(model_path, device="cuda")
+    env = make_env(env_kwargs(n, m, kamikaze, strategy, realism, seed, terrain=terrain,
+                              target_speed=target_speed, num_targets=num_targets))
+    model = load_policy(model_path)
 
     obs = env.reset()
     # capture terrain meta BEFORE stepping: the loop ends after the world has
     # already auto-reset, so a post-loop capture reads the NEXT episode's world
-    meta = dict(target=env.target_pos[0].copy(),
-                hills=(env.obstacle_pos[0][:env.hill_count[0]].copy()
-                       if env.hill_count[0] else None),
-                boxes=(env.box_obs[0][:env.box_count[0]].copy()
-                       if env.box_count[0] else None),
-                hill_r=env.cfg.obstacle_radius, bounds=env.cfg.arena_bounds,
-                targets=env.targets[0].copy())
+    meta = world_meta(env)
     frames = []
     for _ in range(env.max_steps + 1):
-        frames.append(dict(
-            dp=env.def_pos[0].copy(), ap=env.att_pos[0].copy(),
-            da=env.def_alive[0].copy(), aa=env.att_active[0].copy(),
-            ab=env.att_breached[0].copy(), at=env.att_terrain[0].copy(),
-            assign=env.assign[0].copy(), t=int(env.step_count[0]),
-            ic=int(env.ep_intercepts[0]), tp=env.target_pos[0].copy(),
-        ))
+        frames.append(frame(env))
         acts, _ = model.predict(obs, deterministic=True)
         env.step_async(acts)
         obs, _, _, _ = env.step_wait()

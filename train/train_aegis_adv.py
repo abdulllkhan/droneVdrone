@@ -95,12 +95,11 @@ def train_round_a(args):
     eval_env.seed(99)
     gate_model = PPO.load(a_path, device="cuda")
     m = outcome_metrics(collect_outcomes(gate_model, eval_env, 256))
-    log(f"  ROUND A gate: {fmt(m)} (attacker success = breach_rate; "
-        f"scripted attackers manage ~0.05 vs this defender)")
+    log(f"  ROUND A gate: {fmt(m)} (attacker success = breach_rate)")
     env.close(); eval_env.close()
     if m["true_breach_rate"] < 0.08:
         log("  ROUND A verdict: RL attackers did NOT meaningfully beat the defender "
-            "(<0.10). Round B unnecessary — the defender is already robust. Stopping.")
+            "(true breach < 0.08). Round B unnecessary — the defender is already robust. Stopping.")
         return a_path, False
     log(f"  ROUND A verdict: adversarial gap found (breach_rate={m['breach_rate']:.2f}).")
     return a_path, True

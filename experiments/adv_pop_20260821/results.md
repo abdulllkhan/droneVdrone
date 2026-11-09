@@ -24,7 +24,7 @@ The baiting exploit is defused (bad-deaths vs A1: 94% → 5.5%), robustness hold
 across generations it never trained against directly, and two additional
 co-training rounds cost **zero** scripted performance (0.75 vs 0.76).
 
-## Reuse (kamikaze=False) track — ⭐ best overall model after ONE round
+## Reuse (kamikaze=False) track — best overall model after ONE round
 Fresh attackers found a 0.30 gap vs the frozen reuse defender — not baiting per
 se, but exploiting its old terrain sloppiness (0.42 defender crash rate while
 chasing). One co-training round:

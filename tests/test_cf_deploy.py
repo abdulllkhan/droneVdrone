@@ -91,7 +91,8 @@ def test_fence_and_vertical_clamp():
 
 
 def test_dry_run_reproduces_reference(ppo):
-    """2v2 seed 3 must still intercept both attackers at 4.1 s (night-2 number)."""
+    """2v2 seed 3 must still intercept both attackers (night-2 reference: second
+    kill at t=4.1 s, run summary t=4.2 s)."""
     mocap = SyntheticMocap(2, 2, seed=3)
     link = FakeLink()
     res = Bridge(ppo, mocap, link, 2, 2, realtime=False, log=lambda *_: None).run(720)

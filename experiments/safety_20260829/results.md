@@ -31,3 +31,14 @@ Attrition is better treated as density-matched (train the safety knob for the
 deployment density) than globally maximized. Genuine terrain-attrition reduction
 at all scales likely needs a density-invariant mechanism (e.g. obstacle-relative
 speed limiting, or curriculum over danger_radius), not a fixed stronger coefficient.
+
+## Erratum (2026-10-12)
+
+- `obstacle_danger_radius` has not been read by `envs/aegis_env.py` since commit
+  b42b97e (the danger ramp is fixed at 40 m from the obstacle surface), so setting it to
+  110 m had no effect; the only effective change was `r_safety_coeff` −0.10 → −0.15.
+- The scale rows (40v40–50v40) ran without `--realism`, so they contained no obstacles.
+  The rise from 14.6% to 25.4% is in ground, ceiling or boundary crashes, so the
+  explanation that larger danger rings make crowded swarms over-avoid and pile up is not
+  supported. The two rows differ in obstacles (five hills vs none) as well as in
+  density.

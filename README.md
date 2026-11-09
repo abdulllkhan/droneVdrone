@@ -1,296 +1,273 @@
-# droneVdrone
+# AEGIS: a learned interceptor swarm for drone defense
 
-RL-trained defense drones that learn to intercept incoming attack drones to protect a target. Supports 1v1 through NvM swarm scenarios, trained through progressive curriculum learning and adversarial co-training on GPU-accelerated physics.
+AEGIS trains a swarm of interceptor drones to protect one or more points against incoming attack
+drones. One PPO policy, shared by every defender, flies each drone from a 56-dimensional
+ego-centric observation; a classical allocator inside the environment assigns defenders to
+attackers with the Hungarian algorithm. In simulation the same policy wins 98–100% of
+single-target engagements from 1v1 to 20v20, holds 100% with zero leakers at 50v40 and when
+outnumbered 20v40 without having trained at those sizes, and a single checkpoint defends one to
+four protected points. A deployment path to CrazyFlie 2.1 nano-drones is built and verified in
+simulation and software dry runs; it has **not yet flown on hardware**.
 
-## How It Works
+<p align="center">
+  <img src="docs/media/aegis_big24_30v30_hills.gif" width="560" alt="Top-down replay: 30 blue defenders intercept 30 red attackers around a protected point among hills">
+  <br>
+  <sub>30v30 flanking raid in hills terrain, policy <code>aegis_big24</code> (trained up to 24v24). Blue: defenders; red: attackers;
+  dotted lines: current allocator assignments; crosses: eliminated drones; star: protected point.</sub>
+</p>
 
-Drones in a 3D physics simulation:
-- **Defenders** (RL agents) — learn to fly toward and intercept attackers
-- **Attackers** — scripted PID → RL-trained → evasive through adversarial co-training
+## Key results
 
-### Training Pipeline
+Simulation only: fixed seeds, deterministic policy, reusable interceptors (a defender survives an
+intercept and rearms for 2 s). *Win*: all attackers eliminated, none reaches a protected point.
+*Leakers*: attackers per episode that reach one. *Attrition*: share of defenders lost to terrain,
+ground or arena bounds. *Realism*: five hills, wind (0.5 N, gusts to 1.5 N), Gaussian noise
+(σ = 0.02) on normalized observations, 300 m detection range. Summary: [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
 
-1. **Phase 1**: Fly to random static targets (learn basic flight)
-2. **Phase 2**: Chase a moving target at increasing speeds (learn pursuit)
-3. **Phase 3**: Intercept an RL-trained attacker (learn interception)
-4. **Adversarial**: Co-train attacker and defender (arms race)
-5. **Mixture**: Train against pool of attacker generations (prevent forgetting)
-6. **Swarm**: Scale to NvM with CTDE parameter sharing
-
-Weights transfer between phases via `SAC.load()` — each phase builds on the previous one.
-
-### Physics
-
-| Property | Value |
-|---|---|
-| Engine | Newton/NVIDIA Warp (GPU CUDA) |
-| Parallel envs | 256 (default, up to 4096) |
-| Force model | Direct world-frame forces (no propeller sim) |
-| Drone model | Crazyflie 2.x (250g, 8N max force) |
-| Intercept distance | 0.75m |
-| Control freq | 48 Hz (5 substeps at 240 Hz) |
-| Arena | 8m × 8m × 4m |
-
-### Observation Spaces
-
-| Mode | Dims | Contents |
+| Capability | Result | Conditions |
 |---|---|---|
-| 1v1 | 35 | Self pos/vel, opponent pos/vel, relative, closing rate, accel, obstacles |
-| Swarm (NvM) | 57 | Self state, sorted attackers (×3), teammates (×2), obstacles (×3), target |
+| Single target, 1v1 to 20v20 | 98% win at 1v1; 100% win and 0.00 leakers at 3v3, 5v5, 7v5, 10v10, 15v15, 20v20; attrition 2–4% | realism; n=100 per cell and raid type (direct, saturation) |
+| Larger than any training swarm (training never exceeded 24v24) | 100% win, 0.00 leakers at 30v30, 40v40 and 50v40 (90 drones) | open field; n=60 per cell and raid type (direct, flanking) |
+| Outnumbered 2:1 | 100% win, 0.00 leakers at 10v20 and 20v40 | as above |
+| One to four protected points, one policy (`aegis_vark`) | overall win 100 / 98 / 96 / 95% for 1 / 2 / 3 / 4 points; saturation raids 100% at every count, direct raids 100 / 97 / 92 / 91% | realism; 10v10, 15v15, 20v20; targets up to 180 m from centre; n=60 per cell and raid type |
+| Learned (adaptive) attackers | large-team policies tested (terrain generalist, convoy escort, `aegis_vark`) showed no gap on the first pass (true breach 0.005–0.077 vs a 0.08 threshold); the small-team CrazyFlie policy had one (breach 0.19), closed in one co-training round (win 0.96, breach 0.020) | RL attackers trained for 40M steps against each frozen defender; 256-episode gates |
+| CrazyFlie lab policy (`aegis_adv_defender_cf_lab`), lab-like conditions | 100% win at 1v1, 2v1, 2v2, 3v1, 3v2 and 3v3; 94–95% at 1v2, 99–100% at 2v3, 66–68% at 1v3; no defenders lost | minimal sensor set; no obstacles or wind, as indoors and as in its training; n=200 per cell and raid type (direct, jink) |
+| Same policy under realism (hills and wind it never trained on) | win 96–98% at 2v1 and 3v2, 92–95% at 2v2 and 3v3, 88–89% at 1v1, 77–83% at 1v2; attrition 10–18% | minimal sensor set, realism; n=100 per cell and raid type (direct, jink) |
 
-### Training Results
+Rows 1–3 used `aegis_split`, a three-target fine-tune of `aegis_big24` (6–20 defenders vs 3–20 attackers). `aegis_big24` alone
+also scored 100% and 0.00 leakers at 30v30–50v40 and 20v40 (n=20 per cell and raid type, [bigswarm](experiments/bigswarm_20260829/results.md)).
 
-Full evaluation matrix (interception rate, 50 episodes each):
+**Learning vs a scripted controller.** With the same allocator, a scripted defender flying straight
+at the predicted intercept point ties the learned policy on an open-field grid (all 114 cell-and-raid
+entries identical). Under realism the learned policy has a lower breach rate in 67 of 114 entries,
+ties 45, is worse in 2, and cuts the defender bad-death rate from 17.4% to 2.5% (July 2026 kamikaze
+model, 32 episodes per entry; [docs/AEGIS_PLAN.md](docs/AEGIS_PLAN.md)).
 
-| Defender | Mix Att R4 | Adv Att R4 | Adv Att R2 | Phase2 | Scripted |
-|---|---|---|---|---|---|
-| **Best (Mix Def R4)** | **22%** | **20%** | **94%** | **96%** | **100%** |
-| Adv Def R4 | 12% | 20% | 98% | 92% | 96% |
-| Phase 3 Def | 14% | 4% | 86% | 90% | 98% |
+<p align="center">
+  <img src="docs/media/aegis_vark_15v15_3targets.gif" width="400" alt="15 defenders cover three protected points against a saturation raid">
+  <img src="docs/media/aegis_large_50v40_open.gif" width="400" alt="50 defenders intercept 40 attackers in an open field">
+  <br>
+  <sub>Left: 15v15 saturation raid on three protected points, hills (<code>aegis_vark</code>).
+  Right: 50v40 flanking raid, open field (<code>aegis_large</code>, an earlier champion trained up to 20v20).</sub>
+</p>
 
-**Best model**: `defender_best_v5.zip` — mixture-trained against pool of RL attackers (1.4 m/s, faster than defender's ~1.25 m/s) with 3 obstacles, variable altitude target (1.0–3.0m), and 250g drone mass. **Zero attacker target reaches** across all matchups.
+## How it works
 
-Key findings:
-- **Speed asymmetry** (attacker 1.4 m/s vs defender ~1.25 m/s) — interception requires prediction, not just pursuit
-- **3 static obstacles** add environmental complexity (proximity penalties in reward)
-- **Mixture-of-opponents** training prevents catastrophic forgetting across attacker generations
-- **Variable target altitude** (1.0–3.0m) forces 3D spatial awareness
+- **Allocator (classical, [`envs/allocator.py`](envs/allocator.py)).** Per world, a cost matrix
+  over alive defenders × detected attackers combines closed-form intercept time, a penalty when a
+  defender cannot arrive before the attacker breaches, an urgency bonus and hysteresis for the
+  current owner; SciPy's Hungarian solver assigns, and surplus defenders double up or hold a guard
+  ring. Allocation re-runs every 0.5 s and at once on any death, elimination, breach or detection,
+  so a lost defender's attacker is reassigned on the next step: with two defenders killed
+  mid-fight, `aegis_vark` still wins 100% on one target and 98% on three (n=48 per cell and raid type).
+- **Policy (learned, shared).** One PPO policy (MLP, two hidden layers of 256 for actor and
+  critic) runs on every defender. Its 56-dim ego-centric input holds own velocity and altitude,
+  the vector to the nearest protected point, the assigned attacker's relative position, velocity,
+  closing rate and predicted intercept point, assignment metadata, the two nearest teammates and
+  obstacles, arena margins and the nearest unassigned attacker. Its size does not depend on N or
+  M, so the same weights run 1v1 and 50v40. The action is a velocity command (±60 m/s per axis)
+  tracked by a PD force controller, at 12 Hz over 240 Hz physics. With no formation or coverage
+  logic, spreading and re-covering follow from each defender pursuing its assigned attacker.
 
-#### Swarm Results (2v2, 20 episodes each)
+**Rewards are per-agent and owner-based** ([docs/REWARDS.md](docs/REWARDS.md)): potential-based
+shaping toward the assigned attacker (it telescopes, so it cannot be farmed, and re-anchors on
+reassignment), +30 per intercept, a crash or out-of-bounds penalty (−30 default, −60 for current
+champions), −25 to the owner of a breaching attacker (−5 to other defenders), +10 for a team win,
+and small time and safety terms, audited against exploits such as hovering or suicide to dodge a breach penalty.
 
-| Defender | vs Scripted | vs Flanking | vs Mixed | vs RL Att R2 |
-|---|---|---|---|---|
-| **Adv Def R2** | **100%** | **100%** | **100%** | **95%** |
-| Original 2v2 | 100% | 100% | 100% | 25% |
-| Adv Def R1 | - | - | - | 0% |
+**Simulation** ([`envs/aegis_env.py`](envs/aegis_env.py)). Worlds run in parallel on one GPU
+(NVIDIA Warp, Newton physics; observations, rewards and allocation batched in NumPy). Each is a
+1 km × 1 km arena (altitude 5–200 m) with 60 m/s defenders and 50 m/s attackers, and resamples
+team sizes, terrain and raid type every episode. Large-swarm runs step up to 512 worlds (10,240
+agent streams at 20 defender slots each); a smoke test measured 159k–214k agent-steps/s on one DGX
+Spark (GB10). Swept-segment checks keep 110 m/s closing speeds from tunnelling through the 3 m intercept radius.
 
-Adversarial co-training (2 rounds) improved RL attacker interception from 25% → 95%. Zero target reaches across all matchups. Flanking/mixed scripted strategies don't challenge trained defenders.
+**Curriculum** ([`train/train_aegis.py`](train/train_aegis.py)). Four gated stages; a stage that misses its gate gets
+20M more steps once, then halts. Checkpoints are chosen by lowest breach rate on fixed seeds, not mean reward.
 
-#### 3v3 Swarm Results (20 episodes each)
+| Stage | Setting | Gate |
+|---|---|---|
+| 0 | 1v1 pursuit, open field, attackers at 0.8× speed | win ≥ 0.90, bad deaths ≤ 2% |
+| 1 | 2–4 defenders vs 1–3 attackers, direct raids | win ≥ 0.80, leakers ≤ 0.15, bad deaths ≤ 3% |
+| 2 | 3–8 vs 1–8, hills, wind, flanking raids, a random defender loss in 30% of episodes | win ≥ 0.70 |
+| 3 | adds gusts, observation noise, mass and speed variance, jinking raids | win ≥ 0.60, leakers ≤ 0.5 |
 
-| Defender | vs Scripted | vs Flanking | vs Mixed |
-|---|---|---|---|
-| **3v3 v2** | **95%** | **95%** | **100%** |
+The first full run passed all four gates in 28 minutes of training; stage 3 alone from scratch did
+worse (win 0.72 vs 0.76, bad deaths 14.7% vs 2.5%). The champions are stage-3 fine-tunes adding
+team sizes to 24v24, urban and maze terrain, coordinated raids (saturation, staggered waves,
+decoys), moving and multiple targets; each run's exact command is in `experiments/<run>/run_queue.sh`.
 
-3v3 is harder with more attackers to track. Mixed strategy easier to intercept than flanking in 3v3 (flanking forces defenders to split across more angles).
+**Reusable interceptors.** A kamikaze defender removes at most one attacker, so outnumbered cells
+are lost by construction. Surviving an intercept and rearming for 2 s raised outnumbered-cell win
+from 0.24 to 0.68 and exchange ratio from 0.98 to 8.97 (realism grid); all current champions use it.
 
-## Setup
+**Adversarial co-training** ([`train/train_aegis_adv.py`](train/train_aegis_adv.py)). RL
+attackers (own 41-dim observation and reward) train against a frozen defender; at a true breach
+rate of 0.08 or more, the defender retrains against scripted raids plus the pool of learned
+attackers. Learned attackers found "kamikaze-baiting" (luring pursuers into hills), cutting an
+earlier kamikaze champion's win rate from 0.78 to 0.01; the population loop shrank their exploit
+from 0.75 to 0.46 to 0.094. The reusable line, with no trade to bait, needed one hardening round
+(then 0.93 win against its attacker); large-team policies warm-started from it have shown no gap since.
+
+## Sim-to-real: CrazyFlie 2.1
+
+**Status: verified in simulation, unit tests and software dry runs; not yet flown on hardware.**
+
+- **Policy.** `aegis_adv_defender_cf_lab`: small teams (1–4 vs 1–3), minimal sensors (intercept-point
+  and nearest-other-attacker channels zeroed, since ablations showed wins do not depend on them).
+- **Unit mapping, no retraining.** Lengths scale by L = 125 and time by T = √2, so the 1 km arena
+  becomes an 8 × 8 m lab: speed cap 0.34 m/s, acceleration cap 3 m/s², policy at 8.49 Hz, setpoints
+  at 30 Hz. A ground-station referee scores intercepts at 0.12 m and breaches at 0.15 m.
+- **Bridge** ([`deploy/cf_bridge.py`](deploy/cf_bridge.py)): mocap → observation encoder → policy
+  → velocity setpoints over cflib ([`deploy/cf_link.py`](deploy/cf_link.py)). A test checks the
+  encoder against the simulator's observations (agreement to within 2e-5). Positions come from any mocap rig via
+  a JSON-over-UDP forwarder, the CrazyFlies' Lighthouse/Loco estimates, or Qualisys ([`deploy/mocap.py`](deploy/mocap.py)).
+- **Safety layer.** Motors stop outside the geofence (|x|, |y| < 3.8 m, z < 2.2 m) or when mocap
+  is stale for 0.2 s; vertical commands are clamped near floor and ceiling; a speed scale and a
+  policy-free circle test support first flights; Ctrl-C in the control loop lands; hardware runs log telemetry to CSV.
+- **Verification.** `tests/test_cf_deploy.py` drives the full loop over a real UDP socket with a
+  fake radio; the dry run (synthetic mocap) intercepts both attackers of a 2v2 by t = 4.1 s.
+  [docs/FIRST_FLIGHT.md](docs/FIRST_FLIGHT.md) gives the bring-up procedure.
+
+## Limitations
+
+- **No hardware flight yet.** The cflib command path and mocap sources are untested on real drones,
+  and take-off and landing still have known safety gaps, listed in [docs/FIRST_FLIGHT.md](docs/FIRST_FLIGHT.md).
+- **Simulation simplifications.** PD velocity-tracking forces stand in for rotor and attitude
+  dynamics; hills are analytic shapes; detection is team-wide and latched once any defender sees an attacker.
+- **Attrition depends on the policy and the setting.** With obstacles, `aegis_big24` loses 5–12% of
+  defenders at 15v15–24v24 and the multi-target models about 11%. In open field, losses at
+  30v30–50v40 range from 0% (`aegis_split`) to 13–16% (`aegis_big24`); with no obstacles these are
+  ground, ceiling or boundary crashes. Stronger safety shaping and an obstacle speed brake each cut
+  big24's losses in a five-hill 10v10/20v20 test (by 3 and 4 points) but raised them in the
+  open-field 40v40/50v40 test (by 11 and 20 points), where the brake never engages; win stayed near
+  100%, and neither was adopted.
+- **Direct simultaneous raids on several points are the hardest case**: 91–97% for 2–4 points vs
+  100% for saturation raids. Direct-weighted training and spawning defenders across the targets
+  raised three-point direct raids from 74–81% to 90–95%.
+- **Multi-target defense needs sensing that spans the targets.** With three points (typically
+  230–300 m apart), cutting detection range from 300 m to 150 m drops `aegis_vark` from 95% to
+  74%, and to 19% at 75 m (n=48 per cell and raid type). Training with randomized sensor range
+  lifts these only to 80% and 22%: a defender at one target cannot see an attacker heading for
+  another. One target holds 98% at 75 m.
+- **Small, outnumbered teams are weaker**: in lab-like conditions the CrazyFlie policy wins 94–95% at
+  1v2 and 66–68% one against three; under realism, which it never trained on, it also loses 10–18%
+  of its defenders.
+- **Moving and multiple targets cannot be combined**; convoy escort supports a single target.
+
+## Quick start
+
+Requires Linux, Python 3.10+ and an NVIDIA GPU with CUDA; developed on an NVIDIA DGX Spark (GB10,
+128 GB unified memory). Trained checkpoints are **not tracked in git** (`models/**/*.zip` is in
+`.gitignore`), so a fresh clone must train its own.
 
 ```bash
-git clone git@github.com:abdulllkhan/droneVdrone.git
-cd droneVdrone
-
-python3 -m venv venv
-source venv/bin/activate
-
+git clone https://github.com/abdulllkhan/droneVdrone.git && cd droneVdrone
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-pip install newton  # GPU physics
-
-# For DGX Spark (GB10 GPU)
+pip install newton        # Newton physics engine; pulls in NVIDIA Warp
+# DGX Spark (GB10) only: CUDA 12.8 PyTorch nightly
 pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128 --force-reinstall
+pytest tests/test_aegis.py tests/test_cf_deploy.py tests/test_aegis_viewer.py
 ```
 
-## Usage
+| Checkpoint (`models/<name>/best_model.zip`) | Use |
+|---|---|
+| `aegis_vark_stage3_realism_best` | default: one to four protected points (trained with 6–20 defenders vs 3–20 attackers) |
+| `aegis_big24_stage3_realism_best`, `aegis_oomval_stage3_realism_best` | single-target reference at the largest scales (to 50v40) |
+| `aegis_adv_defender_cf_lab_best` | CrazyFlie lab deployment with `deploy/cf_bridge.py` |
+| `aegis_convoy_stage3_realism_best` | escorting a moving target (up to 10 m/s) |
 
-### Progressive Training (1v1)
+### Train
 
 ```bash
-# All phases (fly → chase → intercept)
-python -m train.train_progressive --num-envs 256
-
-# Individual phases
-python -m train.train_progressive --phase 1                                    # fly to target
-python -m train.train_progressive --phase 2 --resume models/phase1_fly_final.zip  # chase
-python -m train.train_progressive --phase 3 --attacker models/phase2_chase_speed0.5_final.zip  # intercept
+python -m train.train_aegis                       # stages 0-3 from scratch, gated; log: logs/train_aegis.log
+python -m train.train_aegis --start-stage 3 --resume <zip> --tag mytag \
+    --set kamikaze=False --set "terrains=('hills','urban','maze')"     # fine-tune; --set takes any AegisConfig field
+python -m train.train_aegis_adv --defender <zip> --kamikaze-false --round-tag r1   # one adversarial round
 ```
 
-### Adversarial Co-Training (1v1)
+### Evaluate
+
+Writes CSV, JSON and a win-rate heatmap to `models/eval_output/`. Current champions need
+`--set kamikaze=False` (the config default is kamikaze interceptors).
 
 ```bash
-# Train attacker and defender against each other in alternating rounds
-python -m train.train_adversarial --defender models/defender_v2_99pct.zip --rounds 4
-python -m train.train_adversarial --defender models/best_model.zip --attacker models/phase2v2_best_attacker.zip --rounds 6
+python -m eval.eval_nvm_grid --model models/aegis_vark_stage3_realism_best/best_model.zip \
+    --realism --set kamikaze=False --set num_targets=3 \
+    --cells 10x10,15x15,20x20 --episodes 60 --strategies direct,saturation
+python -m eval.eval_nvm_grid --baseline           # scripted allocator + intercept-point pursuit
 ```
 
-### Swarm Adversarial Co-Training (NvM)
+### Watch a model
 
 ```bash
-# 2v2 adversarial — train RL swarm attackers vs frozen defenders, then retrain defenders
-python -m train.train_swarm_adversarial --defenders 2 --attackers 2 --defender models/swarm_2v2_final.zip --rounds 4
-
-# With mixture-of-opponents (prevents overfitting to single attacker generation)
-python -m train.train_swarm_adversarial --defenders 2 --attackers 2 --defender models/swarm_2v2_final.zip --mixture --rounds 4
-
-# 3v2 asymmetric adversarial with wind + obstacles
-python -m train.train_swarm_adversarial --defenders 3 --attackers 2 --defender models/swarm_3v2_final.zip --wind --obstacles 3 --rounds 3
+python -m eval.aegis_viewer                  # aegis_vark, 15v15, three protected points
+python -m eval.aegis_viewer --model models/aegis_adv_defender_cf_lab_best/best_model.zip
+python -m eval.launcher                      # browse every checkpoint in models/ and open it in the viewer
 ```
 
-### Swarm Training (NvM)
+A live top-down view with a status panel (alive, intercepts, breaches, losses, session win rate).
+Each model opens in the setting it was trained for; `--nm`, `--strategy`, `--terrain`,
+`--num-targets` and `--set` override it. Space pauses, R restarts with a new seed, S and T cycle
+the raid type and terrain, 1–4 set the number of protected points, and H lists every control.
+
+### Render, dashboard, CrazyFlie dry run
 
 ```bash
-# 2v2 with obstacles and wind
-python -m train.train_swarm --defenders 2 --attackers 2 --num-worlds 128 --obstacles 3 --wind
-
-# Asymmetric configs
-python -m train.train_swarm --defenders 2 --attackers 1 --num-worlds 128 --obstacles 3 --wind
-python -m train.train_swarm --defenders 3 --attackers 2 --num-worlds 64 --obstacles 3 --wind
-
-# 3v3 larger scenario
-python -m train.train_swarm --defenders 3 --attackers 3 --num-worlds 64 --timesteps 3000000
-
-# Curriculum training (progressive difficulty)
-python -m train.train_swarm_curriculum --defenders 2 --attackers 2 --num-worlds 128
-
-# Resume from checkpoint
-python -m train.train_swarm --defenders 2 --attackers 2 --resume models/swarm_2v2_final.zip
+python -m eval.render_aegis --model models/aegis_big24_stage3_realism_best/best_model.zip \
+    --nm 30x30 --strategy flanking --terrain hills --stride 1 --fps 16 --seed 909 \
+    --out models/eval_output/aegis_30v30_hills.gif         # command that produced the replay above
+python -m eval.dashboard   # HTML summary of grid CSVs, results.md files and GIFs -> models/eval_output/dashboard.html
+python -m deploy.cf_bridge --model models/aegis_adv_defender_cf_lab_best/best_model.zip --dry-run
 ```
 
-### Evaluation
-
-```bash
-# 1v1 evaluation with plots and GIF
-python -m eval.eval_progressive --model models/defender_best_v5.zip --mode intercept --attacker models/adv_attacker_round1.zip --gif --episodes 50
-
-# Swarm evaluation with trajectory grid
-python -m eval.eval_swarm --model models/swarm_2v2_final.zip --defenders 2 --attackers 2 --episodes 20 --gif
-python -m eval.eval_swarm --model models/swarm_2v1_final.zip --defenders 2 --attackers 1 --episodes 20
-python -m eval.eval_swarm --model models/swarm_3v2_final.zip --defenders 3 --attackers 2 --episodes 20
-
-# Swarm cross-evaluation matrix (auto-discovers models)
-python -m eval.eval_swarm_matrix --defenders 2 --attackers 2 --episodes 20
-python -m eval.eval_swarm_matrix --defenders 2 --attackers 2 --defender-models models/swarm_2v2_final.zip models/swarm_adv_defender_2v2_round1.zip
-```
-
-### Interactive Game
-
-```bash
-# Free flight — fly a drone with keyboard (WASD + Space/Shift)
-python -m eval.game
-
-# Watch RL 1v1 — best defender vs attacker
-python -m eval.game --mode watch --defender models/defender_best_v5.zip --attacker models/adv_attacker_round1.zip
-
-# You defend — control the blue drone, RL attacker targets
-python -m eval.game --mode defend --attacker models/mix_attacker_round2.zip
-
-# You attack — control the red drone, RL defender intercepts
-python -m eval.game --mode attack --defender models/defender_best_v5.zip
-
-# Swarm mode — watch NvM defenders vs attackers
-python -m eval.game --mode swarm --defenders 2 --attackers 2 --defender models/swarm_2v2_final.zip
-
-# Swarm vs RL attackers
-python -m eval.game --mode swarm --defenders 2 --attackers 2 --defender models/swarm_adv_defender_2v2_round2.zip --attacker-model models/swarm_adv_attacker_2v2_round2.zip
-
-# Swarm with flanking strategy
-python -m eval.game --mode swarm --defenders 2 --attackers 2 --defender models/swarm_2v2_final.zip --strategy flanking
-
-# Larger arena
-python -m eval.game --mode watch --arena 12 --defender models/defender_best_v5.zip --attacker models/adv_attacker_round2.zip
-```
-
-Controls: WASD=move, Space=up, Shift=down, Arrows=rotate camera, +/-=zoom, R=reset, Q=quit
-
-### Monitor Training
-
-```bash
-tensorboard --logdir logs/tensorboard
-```
-
-## Project Structure
+## Repository layout
 
 ```
-droneVdrone/
-├── envs/
-│   ├── newton_env.py             # 1v1 GPU env (fly/chase/intercept/evade + wind/noise)
-│   ├── newton_swarm_env.py       # NvM swarm GPU env (CTDE parameter sharing)
-│   ├── newton_intercept_env.py   # Legacy Newton env (reference)
-│   └── intercept_env.py          # PyBullet env (CPU, legacy)
-├── train/
-│   ├── config.py                 # Hyperparameters and env settings
-│   ├── train_progressive.py      # Progressive training pipeline (1v1)
-│   ├── train_adversarial.py      # Adversarial co-training (1v1)
-│   ├── train_swarm.py            # Swarm training (NvM)
-│   ├── train_swarm_curriculum.py # Swarm curriculum (progressive difficulty)
-│   └── train_swarm_adversarial.py # Swarm adversarial co-training (NvM arms race)
-├── eval/
-│   ├── eval_progressive.py       # 1v1 evaluation with plots and GIFs
-│   ├── eval_swarm.py             # Swarm evaluation with trajectory grids
-│   ├── eval_matrix.py            # Cross-evaluation of defender×attacker pairs (1v1)
-│   ├── eval_swarm_matrix.py      # Swarm defender×attacker cross-evaluation (NvM)
-│   └── game.py                   # Interactive game (free/defend/attack/watch/swarm)
-├── tests/
-│   ├── test_newton_env.py        # 1v1 env tests (46 tests)
-│   └── test_swarm_env.py         # Swarm env tests (38 tests)
-├── models/                       # Saved trained models (gitignored)
-└── logs/                         # TensorBoard logs (gitignored)
+envs/aegis_env.py          AEGIS environment: GPU physics, per-world team sizes, terrain, raids, rewards, 56-dim obs
+envs/allocator.py          intercept-time cost matrix, Hungarian assignment (greedy fallback), guard ring
+train/train_aegis.py       gated 4-stage PPO curriculum
+train/train_aegis_adv.py   adversarial rounds: RL attackers vs a frozen defender, then mixture retraining
+eval/eval_nvm_grid.py      N x M grid evaluation -> CSV/JSON/heatmap; scripted baseline
+eval/aegis_viewer.py       live interactive viewer (pygame) for any AEGIS checkpoint
+eval/aegis_common.py       per-model environment settings shared by the viewer and the GIF renderer
+eval/render_aegis.py       top-down GIF of one episode
+eval/dashboard.py          static HTML results dashboard
+eval/launcher.py           Pygame browser for checkpoints in models/; opens AEGIS models in the viewer
+deploy/                    CrazyFlie bridge, mocap sources, cflib radio link
+tests/                     allocator, env invariants, encoder parity, bridge safety and UDP loop, viewer
+docs/                      capabilities, design and history, rewards, first-flight procedure, media
+experiments/<run>/         run_queue.sh (exact commands), logs, results.md
+models/                    checkpoints (not in git) and eval outputs (models/eval_output/)
+(everything else)          pre-AEGIS code in envs/, train/, eval/ and analysis/, kept for reference
 ```
 
-## Configuration
+| Document | Contents |
+|---|---|
+| [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | scorecard, model-selection guide, limitations |
+| [docs/AEGIS_PLAN.md](docs/AEGIS_PLAN.md) | diagnosis of the pre-AEGIS failure, design, dated log of every experiment |
+| [docs/REWARDS.md](docs/REWARDS.md) | reward terms, exploit audit, reward experiments |
+| [docs/FIRST_FLIGHT.md](docs/FIRST_FLIGHT.md) | CrazyFlie bring-up procedure |
+| `experiments/<run>/results.md` | per-experiment results, e.g. [multi-target](experiments/varktargets_20260830/results.md), [adversarial loop](experiments/adv_pop_20260821/results.md), [CrazyFlie policy](experiments/night2_20260828/results.md) |
 
-All hyperparameters in `train/config.py`:
+## Project history
 
-**EnvConfig** — physics, arena, interception thresholds, spawn ranges, swarm, domain randomization:
-- `drone_mass = 0.250` — 250g quadrotor (Crazyflie-scale)
-- `max_force = 8.0` — 3.3× drone weight for maneuvering
-- `intercept_dist = 0.75` — interception halo radius
-- `attacker_speed_limit = 1.4` — faster than defender (~1.25 m/s)
-- `num_defenders / num_attackers` — swarm configuration (1–3)
-- `wind_enabled / wind_max_force` — random wind perturbation
-- `obs_noise_std` — Gaussian observation noise
-- `num_obstacles` — static obstacle pillars (default 3)
-- `target_alt_randomize` — variable target elevation (1.0–3.0m)
-- `attacker_strategy` — scripted attacker behavior: `"direct"`, `"flanking"`, `"mixed"`
+- **Mar–May 2026: 1v1 to swarms.** A SAC defender learned to intercept in PyBullet, then on
+  Newton/Warp; curriculum, adversarial co-training, obstacles, wind and parameter-shared swarms
+  followed. Training moved to PPO after SAC's Q-values diverged under sparse kamikaze rewards.
+- **Jul 2026: AEGIS redesign.** Swarm training had stalled: uniform team rewards gave no credit
+  assignment, so defenders piled onto the nearest attacker while others breached (one 7-defender
+  run intercepted 3%). AEGIS moved coordination into a classical allocator and kept learning for
+  flight and interception.
+- **Aug 2026:** reusable interceptors, the adversarial population loop, urban and maze terrain,
+  coordinated raids, 24v24 training, convoy escort, multi-target defense, the CrazyFlie policy and
+  bridge, and the n=100 scorecard.
+- **Sep–Oct 2026:** mocap, cflib and safety layer for a first flight; a live viewer; and an audit
+  that re-checked every reported number against the evaluation logs (corrections are dated in the
+  docs). Of the original five-phase plan, phases 1–4 (scripted attacker, curriculum, adversarial
+  co-training, domain randomization) are complete in simulation; phase 5 (sim-to-real) awaits a flight.
 
-**TrainConfig** — SAC hyperparameters:
-- `ent_coef = 0.1` — fixed entropy (auto collapsed to 0.003)
-- `net_arch = [512, 512, 256]` — 3-layer MLP
-- Manual observation normalization in GPU kernels (pos/4, vel/5, rel/6)
-- Early stopping after 100 evals with no improvement
+## License
 
-## Domain Randomization
-
-Both 1v1 and swarm environments support:
-- **Wind**: Random force vectors applied to all drones, direction changes periodically
-- **Observation noise**: Gaussian noise on all observation dimensions
-- **Variable target altitude**: Target height randomized 1.0–3.0m each episode
-- **Obstacle layout**: Obstacles re-randomized each episode with minimum spacing
-
-```bash
-# 1v1 with domain randomization (via config)
-# Swarm with all randomization
-python -m train.train_swarm --defenders 2 --attackers 2 --wind --wind-force 0.3 --noise 0.02
-```
-
-## Roadmap
-
-- [x] Phase 1: Fly to random static targets (96% arrival rate)
-- [x] Phase 2: Chase moving targets with speed curriculum (94% at 0.5 m/s)
-- [x] Phase 3: Intercept RL-trained attacker (100% vs Phase 2 attacker)
-- [x] Adversarial co-training (attacker/defender arms race)
-- [x] GPU-accelerated physics (Newton/Warp — 256 parallel envs)
-- [x] Velocity-based control (sim-to-real compatible)
-- [x] Mixture-of-opponents training (prevents adversarial overfitting)
-- [x] Multi-drone swarm (NvM with CTDE parameter sharing)
-- [x] Domain randomization (wind, observation noise)
-- [x] Static obstacles with proximity penalties
-- [x] Variable target altitude (1.0–3.0m)
-- [x] 250g drone mass (realistic Crazyflie weight)
-- [x] Dynamic/moving obstacles (configurable speed + bounce)
-- [x] Significant obstacle collision penalties (-50 contact, -10x proximity)
-- [x] Action delay simulation (configurable latency for sim-to-real)
-- [x] Asymmetric swarm configs (2v1, 3v2, 1v3)
-- [x] Swarm curriculum training (progressive difficulty stages)
-- [x] Swarm evaluation tool with trajectory grids + GIFs
-- [x] Swarm adversarial co-training (train NvM RL attacker swarms)
-- [x] Coordinated attacker strategies (flanking, mixed)
-- [x] Priority targeting reward shaping (focus on most-threatening attacker)
-- [x] Swarm evaluation matrix (cross-evaluate defender×attacker pairs)
-- [ ] Sim-to-real transfer with Crazyflie hardware
-
-## Tech Stack
-
-- **Physics**: Newton/NVIDIA Warp (GPU)
-- **RL**: Stable Baselines3 (SAC)
-- **Hardware**: NVIDIA DGX Spark (GB10 GPU, 128GB)
-- **Game**: Pygame (isometric visualization)
+Released under the MIT License; see [LICENSE](LICENSE).

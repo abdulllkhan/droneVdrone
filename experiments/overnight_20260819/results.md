@@ -22,13 +22,13 @@ breach-rate checkpoint selection had already picked its cleanest model. The patc
 value is soundness (closes the dead-owner suicide exploit) + faster convergence, not
 end metrics — exactly the ≤1pt movement the audit predicted. **Adopt as default.**
 
-## q3 — Reusable interceptor (kamikaze=False + 2s rearm) ⭐ HEADLINE
+## q3 — Reusable interceptor (kamikaze=False + 2s rearm) — HEADLINE
 | Metric (realism grid) | Kamikaze | Reusable |
 |---|---|---|
 | Overall win | 0.76 | **0.89** |
 | N<M win | 0.24 | **0.68** |
 | Exchange ratio (N<M) | 0.98 (ceiling 1.0) | **8.97** |
-| Bad-death rate | 2.5% | 19.1% ⚠ |
+| Bad-death rate | 2.5% | 19.1% (trade-off, see below) |
 
 Focus cells (plain): **3v5, 5v8, 7v10, 10v20 all 100% win / 0 leakers; 3v8 → 81%**
 (was 0% — structurally impossible — under kamikaze).

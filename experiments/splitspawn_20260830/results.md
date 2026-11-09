@@ -36,3 +36,13 @@ default for multi-target (K=1 unchanged/bit-identical).
 ## Artifacts
 Champion `aegis_splitspawn`; replay `aegis_splitspawn_15v15.gif`. 256 worlds
 (Gemma probe coexisting), no OOM.
+
+## Erratum (2026-10-12)
+
+- In the distributed-spawn evaluation (n=100), `aegis_splitspawn` won 90% / 95% / 95%
+  of direct raids at 10v10 / 15v15 / 20v20 and `aegis_splitdirect` 93% / 95% / 93%. The
+  table's 20v20 entry for "any split model" should read 93–95% (not 95%), and "both
+  score 93–95%" and "74–81% → 93–95%" should read 90–95%.
+- Not reported above: with distributed spawns, defender attrition for both models rose
+  from 3–5% to 9–12% (bad-death rates in `eval_splitspawn.log` and
+  `eval_splitdirect.log`, against `../splitdirect_20260830/eval_splitdirect.log`).

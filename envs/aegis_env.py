@@ -87,8 +87,8 @@ class AegisConfig:
     obstacle_height: float = 60.0      # half-height; top of hill = 2*obstacle_height
     obstacle_placement_range: float = 350.0
     obstacle_min_spacing: float = 120.0
-    obstacle_collision_radius: float = 55.0   # horizontal kill radius
-    obstacle_danger_radius: float = 90.0      # safety shaping starts here (audit: was 70)
+    obstacle_collision_radius: float = 55.0   # unused since DD-16: kill test is surface shell < 5 m
+    obstacle_danger_radius: float = 90.0      # unused since DD-16: danger ramp is a fixed 40 m shell
     # Physical obstacle-proximity speed brake (density-invariant terrain-collision
     # reduction). 0 = off (bit-identical). >0 = min speed fraction at the wall;
     # commanded speed ramps from full (at brake_range) down to this floor (at the

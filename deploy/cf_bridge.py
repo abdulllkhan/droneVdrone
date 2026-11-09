@@ -14,7 +14,7 @@ Unit mapping (design-reviewed, night 2): L = 125 (length), T = sqrt(2) (time).
 Referee thresholds (ground station, not the policy): intercept 0.12 m,
 breach 0.15 m, floor 0.15 m.
 
-STATUS: encoder is cross-checked against the sim env bit-for-bit
+STATUS: encoder is cross-checked against the sim env (max abs diff < 2e-5)
 (tests/test_aegis.py::test_cf_bridge_encoder_matches_env). Mocap sources and
 the cflib command path are wired (deploy/mocap.py, deploy/cf_link.py) and
 exercised end-to-end over UDP in tests/test_cf_deploy.py, but have NOT flown
@@ -59,10 +59,23 @@ GUARD_RING = 100.0
 REALLOC_EVERY = 6
 
 
+def lab_env_kwargs():
+    """AegisConfig fields for the sim side of this lab, i.e. exactly what
+    ObsEncoder mirrors: minimal obs, mocap sensing (every attacker detected),
+    no terrain or wind indoors. eval.aegis_viewer builds its cf_lab world from this."""
+    return dict(defender_speed_limit=DEF_SPEED, arena_bounds=ARENA,
+                altitude_min=ALT_MIN, altitude_max=ALT_MAX,
+                guard_ring_radius=GUARD_RING, realloc_every=REALLOC_EVERY,
+                obs_zero_pip=True, obs_opportunistic=False, obs_noise_std=0.0,
+                sensor_range=0.0, terrain="none", num_obstacles=0,
+                wind_enabled=False)
+
+
 class ObsEncoder:
     """Numpy mirror of AegisSwarmEnv._compute_obs for ONE world, minimal-obs
     profile (obs_zero_pip=True, obs_opportunistic=False), mocap sensing
-    (everything detected). Cross-checked against the env in tests/test_cf_bridge.py."""
+    (everything detected). Cross-checked against the env in
+    tests/test_aegis.py::test_cf_bridge_encoder_matches_env."""
 
     def __init__(self, n, m):
         self.n, self.m = n, m

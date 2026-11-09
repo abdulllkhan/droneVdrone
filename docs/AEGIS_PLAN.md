@@ -1,10 +1,21 @@
-# AEGIS — Variable-Size Swarm Defense: Diagnosis, Design & Implementation Plan
+# AEGIS — Variable-Size Swarm Defense: Diagnosis, Design, and Development Log
 
-> **HANDOFF DOC.** This is the single source of truth for the DD-16 effort. Any Claude
-> instance (or human) resuming this work should read this file top to bottom, then check
-> the **Progress Tracker** at the bottom for current state. Produced 2026-07-12 from an
-> 11-agent diagnosis/research/design workflow (~686k tokens) over the full codebase,
-> training logs, git history, and MARL literature.
+> Design document and development log for AEGIS, the allocator-based swarm-defense
+> system (branches DD-15 to DD-18). Sections 0–3 are the original diagnosis and design,
+> written 2026-07-12 from an 11-agent diagnosis/research/design workflow (~686k tokens)
+> over the full codebase, training logs, git history, and MARL literature. Section 4
+> covers the implementation and the results of the planned curriculum, section 5 is the
+> dated log of all later work (newest first), and section 6 is the runbook. The current
+> results summary is `docs/CAPABILITIES.md`; reward details are in `docs/REWARDS.md`.
+>
+> **Status:** feature-complete. A 2026-08-31 regression sweep re-loaded and re-evaluated
+> all 7 champion models under the final environment (its output was not saved), and every
+> capability has been checked against learned attackers. DD-17 and DD-18 are merged to
+> `main`; DD-18 (2026-09-20) wired the CrazyFlie motion-capture sources, the cflib command
+> link and a safety layer, tested over a real UDP socket. No hardware flight has taken
+> place; the remaining roadmap is hardware-gated (first flight per
+> `docs/FIRST_FLIGHT.md`). Several entries in sections 4 and 5 were corrected on
+> 2026-10-12 after re-checking the evaluation scripts and logs; each correction is marked.
 
 ## 0. Goal
 
@@ -214,6 +225,14 @@ at 720-step timeout (fixes V=0 bootstrap bias); after death the stream emits a c
 dead-sentinel obs / reward 0 / done=False until the world resets (inert filler; log
 effective-sample fraction, alert < 50%).
 
+> **Current values.** The numbers above are the original design. The 2026-08-19 reward
+> audit changed bad death to −30, the unowned-breach penalty to −5 and the safety
+> coefficient to −0.05 with a 90 m danger ring; these are now the `AegisConfig`
+> defaults. Every champion since `aegis_largeP` (2026-08-27) is a reusable interceptor
+> (`kamikaze=False`, 2 s rearm) trained with bad death −60 and safety −0.10, and the
+> obstacle terms were re-based on the distance to the obstacle surface when urban and
+> maze terrain were added. Full table: `docs/REWARDS.md`.
+
 ### 3.5 Mandatory env fixes (fork `envs/aegis_env.py` from `newton_swarm_env.py`)
 
 1. **Per-world `target_pos` array**, re-rolled only for the resetting world (kills F2).
@@ -261,7 +280,7 @@ Total ~180M transitions core (+40M contingency). Throughput gate before Stage 1:
 ≥10k agent-steps/s from the batched-numpy env; port hotspots to Warp **only if** under
 target.
 
-Monitoring (per CLAUDE.md): launch the `/loop` 5-minute monitor at training start; watch
+Monitoring: check every run at 5-minute intervals from the start of training; watch
 `approx_kl` (0.01–0.03), `clip_fraction` (0.05–0.15), `explained_variance`,
 effective-sample fraction (≥60%), intercept/leaker curves, `nvidia-smi dmon`. All models
 to `models/` with descriptive names (e.g. `models/aegis_stage2_fullrange_best/best_model.zip`).
@@ -292,106 +311,270 @@ isn't paying for itself. N<M cells scored on exchange ratio and leakers, not win
 
 ---
 
-## 4. Implementation checklist
+## 4. Implementation
+
+Diagnosis and plan completed 2026-07-12; implementation followed on branch DD-15
+(committed as `07e8afc`).
+
+### 4.1 Checklist
 
 | # | Item | File | Status |
 |---|---|---|---|
-| 1 | Plan doc | `docs/AEGIS_PLAN.md` | ✅ this file |
-| 2 | Allocator (Hungarian primary, greedy fallback, t_go) | `envs/allocator.py` | ✅ |
-| 3 | AEGIS env (all §3.5 fixes, §3.2 obs, §3.4 rewards) | `envs/aegis_env.py` | ✅ |
-| 4 | Tests (§3.7) — 18 passing incl. GPU invariants | `tests/test_aegis.py` | ✅ |
-| 5 | Training pipeline w/ gates + breach-rate checkpointing | `train/train_aegis.py` | ✅ |
-| 6 | NvM grid eval + scripted baseline | `eval/eval_nvm_grid.py` | ✅ |
-| 7 | Smoke test: 159k–214k agent-steps/s (gate was 10k) | — | ✅ |
-| 8 | Stage 0 training launched + monitored | `logs/train_aegis.log` | ✅ 2026-07-21 |
-| 9 | All 4 stage gates PASSED (retrain post t_go-fix, 2026-07-23, 28 min total) | `models/aegis_stage3_realism_best/best_model.zip` | ✅ |
-| 10 | Final grid eval vs baseline (plain + realism, 114 cells each) | `models/eval_output/nvm_grid_*_{plain,realism}.csv` | ✅ |
+| 1 | Plan doc | `docs/AEGIS_PLAN.md` | Done (this file) |
+| 2 | Allocator (Hungarian primary, greedy fallback, t_go) | `envs/allocator.py` | Done |
+| 3 | AEGIS env (all §3.5 fixes, §3.2 obs, §3.4 rewards) | `envs/aegis_env.py` | Done |
+| 4 | Tests (§3.7) — 18 passing incl. GPU invariants | `tests/test_aegis.py` | Done |
+| 5 | Training pipeline with gates + breach-rate checkpointing | `train/train_aegis.py` | Done |
+| 6 | NvM grid eval + scripted baseline | `eval/eval_nvm_grid.py` | Done |
+| 7 | Smoke test: 159k–214k agent-steps/s (gate was 10k) | — | Done |
+| 8 | Stage 0 training launched + monitored | `logs/train_aegis.log` | Done (2026-07-21) |
+| 9 | All 4 stage gates PASSED (retrain post t_go-fix, 2026-07-23, 28 min total) | `models/aegis_stage3_realism_best/best_model.zip` | Done |
+| 10 | Final grid eval vs baseline (plain + realism; 38 cells × 3 raid types each) | `models/eval_output/nvm_grid_*_{plain,realism}.csv` | Done |
 
-**FINAL RESULTS (2026-07-23).** Gates: stage0 win=1.00 · stage1 win=0.90 · stage2
-win=0.71 · stage3 win=0.81 (bad-death 3%). Plain grid (no terrain/wind): model TIES
-the scripted Hungarian+PN baseline in all 114 cells — both perfect at N≥M (incl.
-held-out 6v4/9v6 and 15v10), both exactly 1:1 exchange when outnumbered; model is
-~0.3 s faster to first intercept. REALISM grid (hills+gusts+noise+jink — the point
-of learning): model beats baseline on breach rate in 67/114 cells, ties 45, worse
-in 2. Aggregates baseline→model: win 0.69→0.76, leakers/ep 1.03→0.81, bad-death
-17.4%→2.5%, exchange ratio 0.68→0.92; parity cells win 0.79→0.99; held-out 6v4 win
-0.89→1.00. One shared 56-dim policy runs every cell 1v1→15v10 unchanged.
+### 4.2 Implementation deltas vs spec (decided during build)
+
+- Allocator uses **scipy Hungarian** per world as primary (greedy had a 13% mean
+  optimality gap on random matrices; Hungarian is µs-cheap at ≤8×8). Greedy remains
+  as the no-scipy fallback. Allocation only runs on worlds flagged for realloc.
+- Hills are **analytic** (no physics bodies): distance-based kill/shaping checks;
+  attackers steer around hills and die on contact (`terrain_kills` in outcomes).
+  The urban and maze terrain added on 2026-08-27 uses analytic boxes the same way;
+  kill and safety-shaping checks now use the distance to the obstacle surface, and
+  the two obstacle observation slots [37:45] report the nearest hills or walls.
+- Detection is **latched** (once seen by any defender, tracked forever) for
+  allocator stability.
+- Empty teammate/hill obs slots carry a dist=1.0 "far away" sentinel (not 0).
+- Stage gates as built: `train/train_aegis.py` automates the win, mean-leaker and
+  bad-death thresholds of the §3.6 table on 256 fixed-seed episodes (stage 0: win
+  ≥0.90, bad-death ≤2%; stage 1: win ≥0.80, leakers ≤0.15, bad-death ≤3%; stage 2:
+  win ≥0.70; stage 3: win ≥0.60, leakers ≤0.5). The other gate criteria in the table
+  are not checked automatically. Stages 0 and 1 run at 2048 and 1024 worlds rather
+  than 512.
+- Final grid eval as built: 32 episodes per cell and raid type rather than 200, and the
+  scripted baseline uses the same Hungarian allocator but flies straight at the predicted
+  intercept point (pursuit-to-PIP) rather than using proportional navigation.
+- Early result: Stage 0 (1v1) reached 100% eval win rate / 0 breaches by 3.3M steps.
+
+### 4.3 Results of the planned curriculum (2026-07-23)
+
+Gates: stage0 win=1.00 · stage1 win=0.90 · stage2 win=0.71 · stage3 win=0.81
+(bad-death 3%). Plain grid (no terrain/wind; 38 NvM cells × 3 raid types = 114
+entries, 32 episodes each): model TIES the scripted baseline (Hungarian allocator +
+pursuit-to-PIP) in all 114 entries — both perfect at N≥M (incl. held-out 6v4/9v6 and 15v10),
+both exactly 1:1 exchange when outnumbered; model is ~0.3 s faster to first
+intercept. REALISM grid (hills+gusts+noise+jink — the point of learning): model beats
+baseline on breach rate in 67/114 entries, ties 45, worse in 2. Aggregates
+baseline→model: win 0.69→0.76, leakers/ep 1.03→0.81, bad-death 17.4%→2.5%, exchange
+ratio 0.68→0.92; parity cells win 0.79→0.99; held-out 6v4 win 0.89→1.00. One shared
+56-dim policy runs every cell 1v1→15v10 unchanged.
+
+*Corrected 2026-10-12:* this entry originally called the baseline "Hungarian+PN"
+(proportional navigation) and the 114 cell-and-raid-type entries "cells"; the figures
+themselves were re-derived from `models/eval_output/nvm_grid_{baseline,model}_{plain,realism}.csv`
+and are unchanged.
+
 Next (Phase 3): adversarial co-training via stage 4 hook (mixture-of-opponents
 pool per project_status memory); consider raising N<M performance with reserve
 tactics (currently XR 0.98, near the 1:1 kamikaze ceiling).
 
-**MULTI-TARGET SPLIT DEFENSE (2026-08-29, DD-17)** — NEW CAPABILITY, see
-`experiments/split_20260829/results.md`. The swarm now protects K separate points
-at once (num_targets config; K=1 bit-identical, 22/22 tests). Implemented with
-ZERO allocator/interception change — defenders follow assigned attackers, which
-now head to different points, so coverage emerges. `aegis_split` (K=3 fine-tune)
-= 0.90 win / 4.5% attrition defending 3 points, beats big24 zero-shot (0.87 /
-8.4%), and retains **1.00 at K=1 (no regression — a strict superset)**. big24
-also generalizes to split zero-shot (0.87), another payoff of the ego-centric
-design. Renderer draws all targets; GIF aegis_split3_15v15.
+*Follow-up:* the N<M ceiling was removed by the reusable-interceptor mode
+(2026-08-19) rather than by reserve tactics; adversarial co-training ran on
+2026-08-20/21 with a separate driver, `train/train_aegis_adv.py` (section 5).
 
-**SPEED-BRAKE A/B + ATTRITION VERDICT (2026-08-29, DD-17)** — see
-`experiments/brake_20260829/results.md`. A physical obstacle speed-brake
-(dynamics, not reward) was meant to be density-invariant — it FAILED the same
-way as shaping, worse: −4pt attrition @20v20 but **+20pt @50v40** (braked
-defenders perpetually slowed in crowded arenas → more collisions). **Two
-independent mechanisms (reward shaping, physical brake) now confirm: terrain
-attrition at high density is NOT a caution-tuning problem** — caution backfires
-when crowded, and win stays ~100% regardless (reusable interceptors absorb it).
-Attrition-at-density is an intrinsic cost; the lever (if ever needed) is
-STRUCTURAL (fewer obstacles / inter-drone spacing), not shaping. Kept big24.
-Brake code retained (default off) for ≤20v20 terrain ops. Ops: 448-world AEGIS
+---
+
+## 5. Development log (newest first)
+
+Each entry links the dated experiment record in `experiments/` that holds the full
+tables. *Follow-up* notes were added later where an entry's next step or open issue
+has since been resolved. *Corrected* notes mark entries whose numbers or
+interpretation were revised on 2026-10-12 after re-checking the evaluation scripts and
+logs; the matching experiment records carry an erratum.
+
+### 2026-09-20 — CrazyFlie hardware path wired (DD-18)
+
+Code: `deploy/mocap.py`, `deploy/cf_link.py`, `deploy/cf_bridge.py`; procedure:
+`docs/FIRST_FLIGHT.md`. Position sources share one contract (lab metres, z up): a
+JSON-over-UDP feed that any motion-capture rig can drive, the CrazyFlies' own onboard
+estimate (Lighthouse or Loco deck) read over cflib, and a direct Qualisys (QTM)
+client. The cflib link arms, takes off, streams world-frame velocity setpoints and
+external positions, lands and stops. The bridge gained a safety layer: geofence
+(motors stop beyond |x|, |y| = 3.8 m or z = 2.2 m), stale-mocap watchdog (0.2 s),
+floor/ceiling clamp on vertical commands, speed scaling, a policy-free circle test, a
+flight-time limit and per-tick CSV telemetry. Nine tests in `tests/test_cf_deploy.py`,
+including an end-to-end run over a real UDP socket; the observation encoder is
+unchanged and the 2v2 dry-run reference still intercepts both attackers by 4.1 s. Not
+yet flown on hardware.
+
+### 2026-08-31 — Multi-target adversarial verification; champion regression sweep (DD-17)
+
+Record: `experiments/varkadv_20260831/results.md`. Learned attackers trained against
+the frozen `aegis_vark` at K=3 reached a true breach rate of 0.005 (gap threshold
+0.08), so the hardening round was skipped by design; grid eval of vark against the
+learned attacker: win 0.90, breach 0.009–0.013, comparable to scripted direct raids on
+the same cells (0.006–0.013). Defender terrain attrition was elevated (32–36%) while
+chasing the evasive attacker through hills. With this, every
+AEGIS champion (single-target large, convoy, cf_lab, multi-target vark) has been
+checked against learned attackers; only the small-team cf_lab ever had a gap, and it
+was hardened (2026-08-28). A regression sweep then re-loaded and re-evaluated all 7
+champion models (big24, oomval, vark, splitspawn, convoy, sensrobust, cf_lab) under the
+final environment; its output was not saved in the repository.
+
+*Corrected 2026-10-12:* the original record called the learned attacker's breach rate
+lower than the "scripted ~0.05"; that figure is a fixed string in the training log
+message, not a measurement.
+
+### 2026-08-30 — Sensor range vs target spacing (DD-17)
+
+Records: `experiments/varkstress_20260830/results.md`,
+`experiments/sensorrobust_20260830/results.md`. Stress sweep of `aegis_vark` at K=1
+and K=3 (8v8 and 15v15, n=48): speed parity and a two-defender kill injection degrade
+gracefully (K=3: 93% and 98%), but shorter sensor range collapses split defense (K=3:
+74% at 150 m, 19% at 75 m, against 95% at the standard 300 m; K=1: 100% and 98%).
+Fine-tuning with per-world sensor range sampled from 80–350 m (`aegis_sensrobust`)
+recovered 150 m to 80% but moved 75 m only to 22%. The three points sit 126–180 m from
+the centre, typically 230–300 m apart, so with short range no defender sees the
+attackers heading for a distant point in time. Design rule: detection range must be
+comparable to or greater than the spacing between protected points.
+
+*Corrected 2026-10-12:* the original records gave the points as "180 m apart" (180 m is
+the placement radius) and the sensor-robust baseline as 350 m (the realism setting uses
+300 m).
+
+### 2026-08-30 — Variable target count: one policy for 1–4 points (DD-17)
+
+Record: `experiments/varktargets_20260830/results.md`. `aegis_vark`, fine-tuned from
+`aegis_splitspawn` with the number of protected points sampled per world
+(K ~ U[1,4]): win 100% / 98% / 96% / 95% at K = 1 / 2 / 3 / 4; saturation raids 100%
+at every K, direct raids 100% → 91%. It matches the single-target champions at K=1
+and the dedicated K=3 model at K=3, and became the recommended default.
+
+### 2026-08-30 — Closing the split-vs-direct gap (DD-17)
+
+Records: `experiments/splitdirect_20260830/results.md`,
+`experiments/splitspawn_20260830/results.md`. Direct simultaneous raids on three
+points were the one weak cell of the n=100 scorecard (74–81%). Weighting direct raids
+3× in fine-tuning (`aegis_splitdirect`) raised them to 83–85%; distributing defender
+spawns round-robin across the K targets (environment change, commit `faa82d3`, now
+the multi-target default) raised them to 90–95% for any split model, showing that the
+residual gap was spawn geometry rather than policy. `aegis_splitspawn`, trained with
+distributed spawns, became the K=3 champion. Defender attrition rose with distributed
+spawns, from 3–5% to 9–12% for both models (noted in the record's erratum).
+
+### 2026-08-29 — n=100 scorecard and capabilities report (DD-17)
+
+Logs: `experiments/scorecard_20260829/`. Fixed-seed evaluation with n=100 episodes per
+cell and raid type (n=60 for the open-field scale grid), compiled into
+`docs/CAPABILITIES.md`. The single-target and scale cells used `aegis_split` (big24
+fine-tuned for three points), evaluated with one point; the CrazyFlie cells used
+`aegis_adv_defender_cf_lab`. Single-target, split and CrazyFlie cells ran under the
+realism setting (five hills, wind with gusts, observation noise, 300 m detection; hills
+and wind the CrazyFlie policy never trained on), the scale cells in open field.
+
+### 2026-08-29 — Multi-target split defense (DD-17)
+
+Record: `experiments/split_20260829/results.md`. New capability: the swarm now
+protects K separate points at once (num_targets config; K=1 bit-identical, 22/22
+tests). Implemented with ZERO allocator/interception change — defenders follow
+assigned attackers, which now head to different points, so coverage emerges.
+`aegis_split` (K=3 fine-tune) = 0.90 win / 4.5% attrition defending 3 points, beats
+big24 zero-shot (0.87 / 8.4%), and retains **1.00 at K=1 (no regression — a strict
+superset)**. big24 also generalizes to split zero-shot (0.87), another payoff of the
+ego-centric design. Renderer draws all targets; GIF aegis_split3_15v15.
+
+### 2026-08-29 — Speed-brake A/B (DD-17)
+
+Record: `experiments/brake_20260829/results.md`. A physical obstacle speed-brake
+(dynamics, not reward; big24 fine-tuned with the brake on) cut defender attrition
+4.4 pt in the five-hill 10v10/20v20 test (9.1% → 4.7%, win −2.3 pt) but raised it
+19.9 pt in the open-field 40v40/50v40 test (14.6% → 34.5%, win −1.2 pt). The brake
+acts only near obstacles, so it never engaged in the open-field test; the increase
+there is in ground, ceiling and boundary crashes of the brake-trained policy. Kept
+big24. Brake code retained (default off) for ≤20v20 terrain ops. Ops: 448-world AEGIS
 OOMs when the concurrent non-AEGIS `dev/probe_gemma_robust.py` shares the box —
 use ≤256 worlds when sharing.
 
-**SAFETY-SHAPING A/B (2026-08-29, DD-17)** — see
-`experiments/safety_20260829/results.md`. Stronger safety (r_safety_coeff −0.15,
-danger radius 110) is a DENSITY-DEPENDENT TRADEOFF, not a win: cuts attrition
-−3pt at trained density (10-20v20) but +11pt at 50v40 (over-avoidance piles up
-crowded arenas). **Kept big24 as champion — did NOT adopt.** Lesson: safety
-shaping tuned at one density doesn't transfer; attrition needs a density-invariant
-mechanism (obstacle-relative speed limit / danger-radius curriculum), not a fixed
-stronger coeff. `aegis_safe` kept for ~10-20v20-density terrain ops only.
+*Corrected 2026-10-12:* the original entry explained the 50v40 result as braked
+defenders "perpetually slowed in crowded arenas → more collisions" and concluded,
+with the safety A/B below, that terrain attrition at high density is intrinsic and not
+a caution-tuning problem. The large-scale test contained no obstacles, so neither A/B
+measured how obstacle attrition scales with density.
 
-**BIG-SWARM SCALE-UP (2026-08-29, DD-17)** — see
-`experiments/bigswarm_20260829/results.md`. First run on the lifted cap: a
-**24v24 generalist at 448 worlds** (champion `aegis_big24`). Trained range
-15v15–24v24 = 100% win / zero leakers all terrains. **Generalizes UP with zero
-extra training: 30v30, 40v40, 50v40 all 100%, and outnumbered 20v40 (2:1) at
-100% zero-leaker** (reusable interceptors re-engage). Size-invariance now proven
-1v1→50v40 across the model family. Bad-death rises with density (16% @ 50v40) —
-survival-bonus shaping is the lever if needed.
+### 2026-08-29 — Safety-shaping A/B (DD-17)
 
-**OOM FIXED — FULL 512 WORLDS RESTORED (2026-08-29, DD-17)** — see
-`experiments/oomfix_20260829/results.md`. The recurring exit-137 was GPU-buffer
-allocation churn (fresh wp.array every step/reset), not RAM. Fix (commit
+Record: `experiments/safety_20260829/results.md`. Stronger safety shaping
+(r_safety_coeff −0.10 → −0.15; the run also set obstacle_danger_radius 110, which the
+environment no longer reads) cut defender attrition 3.2 pt in the five-hill 10v10/20v20
+test (9.1% → 5.9%) but raised it 10.9 pt in the open-field 40v40/50v40 test (14.6% →
+25.4%); win stayed 1.00 in both. **Kept big24 as champion — did NOT adopt.**
+`aegis_safe` kept for ~10–20v20 operations in hilly terrain only.
+
+*Corrected 2026-10-12:* the original entry attributed the 50v40 increase to
+over-avoidance of the larger 110 m danger rings in crowded arenas, but the danger
+radius had no effect (only the coefficient changed) and the 40v40/50v40 test had no
+obstacles; what rose there is the rate of ground, ceiling and boundary crashes.
+
+### 2026-08-29 — Big-swarm scale-up (DD-17)
+
+Record: `experiments/bigswarm_20260829/results.md`. First run on the lifted cap: a
+**24v24 generalist at 448 worlds** (champion `aegis_big24`, trained on hills, urban
+and maze terrain). Trained range 15v15–24v24 = 100% win / zero leakers in the realism
+(hills) evaluation, with 5–12% defender attrition. **Generalizes UP with zero extra
+training: 30v30, 40v40, 50v40 all 100%, and outnumbered 20v40 (2:1) at 100%
+zero-leaker** (open field, n=20 per cell and raid type; reusable interceptors
+re-engage). Win rates now hold from 1v1 to 50v40 across the model family. In the
+open-field battles big24 lost 10–16% of its defenders; with no obstacles present these
+are ground, ceiling or boundary crashes.
+
+*Corrected 2026-10-12:* the original entry described the 15v15–24v24 evaluation as
+covering all terrains (it was hills only) and read the 16% open-field losses at 50v40
+as terrain attrition rising with density; `aegis_split` lost no defenders in the same
+open-field cells (scorecard, 2026-08-29).
+
+### 2026-08-29 — OOM fixed: full 512 worlds restored (DD-17)
+
+Record: `experiments/oomfix_20260829/results.md`. The recurring exit-137 was
+GPU-buffer allocation churn (fresh wp.array every step/reset), not RAM. Fix (commit
 29a874d): preallocate + `.assign()` in-place, bit-identical (21/21 tests). The
 512-world/n_max=20 config that died 4× now runs clean (RAM flat ~12 GB, gate
 win 0.97; bonus champion aegis_oomval: maze/scale 1.00 incl. 50v40). **The
 ≤256-world cap is LIFTED** — full 512 worlds (~2× parallelism) available for all
 future large runs.
 
-**CONVOY ADVERSARIAL VERIFICATION (2026-08-29, DD-17)** — see
-`experiments/convoyadv_20260829/results.md`. Learned attackers vs the frozen
+*Follow-up:* evade-mode adversarial training still ran out of memory at 512 worlds
+in the multi-target adversarial run and used 256
+(`experiments/varkadv_20260831/results.md`).
+
+### 2026-08-29 — Convoy adversarial verification (DD-17)
+
+Record: `experiments/convoyadv_20260829/results.md`. Learned attackers vs the frozen
 moving-target escort: **no gap** (true_breach 0.077 < 0.08; grid 0.89 win / 0.016
 breach on 10 m/s targets). Escort is deployment-grade as-is. Emerging **rule**:
 small-team policies (cf_lab, 1–4) need an adversarial hardening pass; large-team
 policies (largeP, convoy, 4–20) inherit robustness structurally. Attacker kept
 for future pools; new GIF aegis_convoyadv_hills_8v10.
 
-**CRAZYFLIE ADVERSARIAL VERIFICATION (2026-08-28, DD-17)** — see
-`experiments/cfadv_20260828/results.md`. The small-team lab policy had a REAL
+### 2026-08-28 — CrazyFlie adversarial verification and deployment bridge (DD-17)
+
+Record: `experiments/cfadv_20260828/results.md`. The small-team lab policy had a REAL
 adversarial gap (unlike the large generalist): learned attackers breached frozen
 cf_lab at 0.19 (evade gate). One co-training round closed it →
 **`aegis_adv_defender_cf_lab`** (win 0.96/breach 0.02 vs mixture; 0.991/0.005 vs
 adaptive RL in the grid harness; no scripted regression). **Ship the hardened
 model, not raw cf_lab.** Also: **`deploy/cf_bridge.py`** — the CrazyFlie mocap→
-policy→setpoint bridge (encoder test-verified bit-identical to sim, --dry-run
+policy→setpoint bridge (encoder test-verified against the sim to within 2e-5, --dry-run
 flies 2v2 in 4.1 s; cflib path stubbed for first hardware flight). Recurring
 exit-137 = transient unified-memory spike, use ≤256 worlds.
 
-**NIGHT 2 (2026-08-28, branch DD-17): CRAZYFLIE-READY + CONVOY ESCORT** — see
-`experiments/night2_20260828/results.md`. **`aegis_cf_lab`** = validated lab
+*Follow-up:* the cflib path was wired in DD-18 (2026-09-20); the world-count limit
+was lifted by the OOM fix (2026-08-29).
+
+*Corrected 2026-10-12:* the original entry called the encoder "bit-identical" to the
+sim; the test checks agreement to within 2e-5.
+
+### 2026-08-28 — Night 2: CrazyFlie-ready policy and convoy escort (DD-17)
+
+Record: `experiments/night2_20260828/results.md`. **`aegis_cf_lab`** = validated lab
 policy via pure unit-mapping (L=125, T=√2 → 0.34 m/s / 3 m/s² / 8.49 Hz, minimal
 sensor obs): gate 1.00 on every N≥M small-team cell vs control's 0.82–0.98,
 mean breach 7× lower. **Convoy escort** shipped (moving target, terrain-aware
@@ -400,17 +583,24 @@ wander): the ego-centric obs made escort free — static champion already 1.00 o
 hardware bridge (first real CrazyFlie flight), n_max=20 OOM profiling (use ≤288
 worlds until fixed).
 
-**ROUND 2 (2026-08-27 03:58): CHAMPION = `aegis_largeP_stage3_realism_best`** —
-attrition-priced retrain (bad_death −60, safety −0.10): urban attrition 22.7%→
-**13.3%** at 1.00 win, training-time mixed-terrain attrition →0.047. Scripted
-raids now **route through maze gates** (aegis_maze_routed_10v12.gif). Sensor
-knockouts: PIP + opportunistic channels are NOT load-bearing (win 1.00/0.99
-without them) — **minimal CrazyFlie sensor suite = own state + assigned-target
-track + terrain + boundary**; teammate sensing is a survivability aid (+10pts
-attrition without it). Full table in experiments/overnight_20260827/results.md.
+*Follow-up:* the bridge was built on 2026-08-28 (entry above) and wired to cflib in
+DD-18 (2026-09-20); the first flight awaits hardware. The OOM was root-caused and
+fixed on 2026-08-29.
 
-**LARGE SWARMS + TERRAIN + COORDINATED ATTACKERS (2026-08-27)** — see
-`experiments/overnight_20260827/results.md`. New champion
+### 2026-08-27 — Round 2: attrition pricing; champion `aegis_largeP`
+
+Record: `experiments/overnight_20260827/results.md` (Round 2, 03:43–03:58).
+Champion = `aegis_largeP_stage3_realism_best` — attrition-priced retrain (bad_death
+−60, safety −0.10): urban attrition 22.7%→**13.3%** at 1.00 win, training-time
+mixed-terrain attrition →0.047. Scripted raids now **route through maze gates**
+(aegis_maze_routed_10v12.gif). Sensor knockouts: PIP + opportunistic channels are NOT
+load-bearing (win 1.00/0.99 without them) — **minimal CrazyFlie sensor suite = own
+state + assigned-target track + terrain + boundary**; teammate sensing is a
+survivability aid (+10pts attrition without it).
+
+### 2026-08-27 — Large swarms, terrain, and coordinated attackers
+
+Record: `experiments/overnight_20260827/results.md`. New champion
 **`aegis_large_stage3_realism_best`**: kamikaze=False generalist trained
 N∈[4,20]×M∈[1,20] on randomized hills/**urban**/**maze** terrain (box-obstacle
 system, obs contract unchanged) vs new **saturation/waves/decoy** coordinated
@@ -418,13 +608,17 @@ raids. Results: urban+maze grids **1.00 win** to 20v20; hills 0.98; open-field
 scale **50v40 = 100% win, 0 leakers, ≤0.6% losses**; adversarial check found
 **no gap on the first pass** (true breach 0.012 — hardening transfers through
 warm-starts). Attacker checkpoints now select on TRUE breach (stalls excluded).
-**Dashboard**: `python -m eval.dashboard` → `models/eval_output/dashboard.html`
-(+ artifact "AEGIS Flight Log"). Soft spot: ~23% defender terrain attrition in
+**Dashboard**: `python -m eval.dashboard` → `models/eval_output/dashboard.html`.
+Soft spot: ~23% defender terrain attrition in
 obstacle worlds (open field ≤1.7%) — next lever per-kill survival bonus; also
 attacker route-planning through maze gates.
 
-**PHASE-3 POPULATION LOOP + REUSE TRACK (2026-08-21)** — see
-`experiments/adv_pop_20260821/results.md`. The loop CONVERGED in 2 rounds:
+*Follow-up:* gate-routed raids shipped the same night, and attrition was priced into
+the reward instead (Round 2, entry above: urban attrition 22.7% → 13.3%).
+
+### 2026-08-21 — Phase 3: population loop and reuse track
+
+Record: `experiments/adv_pop_20260821/results.md`. The loop CONVERGED in 2 rounds:
 fresh-attacker exploit sizes 0.75 → 0.46 → 0.094 ("no gap" → stop). Kamikaze
 champion `aegis_adv_defender_r2_best`: 0.55–0.73 win vs every attacker
 generation (old defender: 0.01 vs gen-1), baiting defused (bad-deaths 94%→5.5%),
@@ -436,9 +630,10 @@ reusable-interceptor hypothesis held; residual cost is ~20% terrain attrition
 defaults; evade mode has an ar_stall=-10 penalty; 'rl' strategy supports
 attacker POOLS (attacker_model_paths).
 
-**PHASE-3 ADVERSARIAL CO-TRAINING, ROUND 1 (2026-08-20)** — see
-`experiments/adv_20260820/results.md`. Env gained `mode="evade"` (RL attackers,
-41-dim ego obs) and an `'rl'` attacker strategy (frozen model) for mixture
+### 2026-08-20 — Phase 3: adversarial co-training, round 1
+
+Record: `experiments/adv_20260820/results.md`. Env gained `mode="evade"` (RL
+attackers, 41-dim ego obs) and an `'rl'` attacker strategy (frozen model) for mixture
 retraining; driver `train/train_aegis_adv.py`. Findings: learned attackers
 crush the scripted-era champion (win 0.78 → **0.01**, 94% defender bad-deaths via
 **kamikaze-baiting** into terrain); one co-training round recovers win 0.01 →
@@ -447,41 +642,37 @@ crush the scripted-era champion (win 0.78 → **0.01**, 94% defender bad-deaths 
 population loop (A2/B2), and co-train the kamikaze=False defender (structurally
 less baitable). Models: `models/aegis_adv_{attacker,defender}_best/`.
 
-**OVERNIGHT EXPERIMENTS (2026-08-19)** — see `docs/REWARDS.md` +
-`experiments/overnight_20260819/results.md`. Highlights: scale extrapolation
-perfect to **40v30** (5× trained size); reward-audit patch adopted (cleaner
-training, exploit closed); **kamikaze=False reusable-interceptor mode added to
-the env** and it removes the N<M ceiling (10v20: 100% win, XR ~9); self-healing
-survives 2-defender kill injection at 0.99 win; sensor range is the binding
-constraint (0.70 win at 75 m); curriculum confirmed necessary. New models:
+*Follow-up:* both done on 2026-08-21 (entry above).
+
+### 2026-08-19 — Overnight experiments: scale, reward audit, reusable interceptor
+
+Records: `docs/REWARDS.md`, `experiments/overnight_20260819/results.md`. Highlights:
+scale extrapolation perfect to **40v30** (5× trained size); reward-audit patch
+adopted (cleaner training, exploit closed); **kamikaze=False reusable-interceptor
+mode added to the env** and it removes the N<M ceiling (10v20: 100% win, XR ~9);
+self-healing survives 2-defender kill injection at 0.99 win; sensor range is the
+binding constraint (0.70 win at 75 m); curriculum confirmed necessary. New models:
 `models/aegis_{patch,reuse,scratch3}_stage3_realism_best/`.
 
-**Implementation deltas vs spec** (decided during build):
-- Allocator uses **scipy Hungarian** per world as primary (greedy had a 13% mean
-  optimality gap on random matrices; Hungarian is µs-cheap at ≤8×8). Greedy remains
-  as the no-scipy fallback. Allocation only runs on worlds flagged for realloc.
-- Hills are **analytic** (no physics bodies): distance-based kill/shaping checks;
-  attackers steer around hills and die on contact (`terrain_kills` in outcomes).
-- Detection is **latched** (once seen by any defender, tracked forever) for
-  allocator stability.
-- Empty teammate/hill obs slots carry a dist=1.0 "far away" sentinel (not 0).
-- Early result: Stage 0 (1v1) reached 100% eval win rate / 0 breaches by 3.3M steps.
+---
 
-## 5. Progress tracker / handoff notes
+## 6. Runbook and known traps
 
-- **2026-07-12**: Diagnosis workflow complete. Plan written. Implementation starting
-  (items 2–6). Branch: work happening on `DD-15` (note: user had staged model/eval
-  artifacts predating this effort — do not touch them). Next instance: check the
-  checklist above, run `pytest tests/test_aegis.py`, check `pgrep -f train_aegis` and
-  `logs/train_aegis.log` before assuming training state.
-- Training runbook:
-  ```bash
-  python -m train.train_aegis                      # full staged run
-  python -m train.train_aegis --start-stage 2 --resume models/aegis_stage1_best/best_model.zip
-  tail -50 logs/train_aegis.log
-  nvidia-smi dmon -s u -c 3
-  python -m eval.eval_nvm_grid --model models/aegis_stage3_best/best_model.zip
-  ```
-- Known trap list (do not reintroduce): eval_freq/ckpt_freq must be divided by n_envs;
-  `reset_num_timesteps=True` per stage; one-time bad-death elimination; scale-aware
-  waypoint radii; SAC is banned for this reward regime (Q-divergence, commit f95a86a).
+```bash
+python -m train.train_aegis                      # full staged run (stages 0-3)
+python -m train.train_aegis --start-stage 2 --resume models/aegis_stage1_core_nvm_best/best_model.zip
+tail -50 logs/train_aegis.log
+nvidia-smi dmon -s u -c 3
+python -m eval.eval_nvm_grid --model models/aegis_stage3_realism_best/best_model.zip
+```
+
+Later models were trained with `--tag <name>` and repeated `--set KEY=VAL` overrides
+of `AegisConfig`; the champions use `kamikaze=False`, `r_bad_death=-60.0` and
+`r_safety_coeff=-0.10`. The exact command for each model is in
+`experiments/<run>/run_queue*.sh`. Reusable-interceptor models must also be evaluated
+with `--set kamikaze=False`, because the `AegisConfig` default is still
+`kamikaze=True`.
+
+Known trap list (do not reintroduce): eval_freq/ckpt_freq must be divided by n_envs;
+`reset_num_timesteps=True` per stage; one-time bad-death elimination; scale-aware
+waypoint radii; SAC is banned for this reward regime (Q-divergence, commit f95a86a).

@@ -33,3 +33,12 @@ complete: split defense is robust to adaptive adversaries.
 Evade-mode adversarial training OOMs at 512 worlds (frozen-defender predict +
 attacker PPO is memory-heavy even with Gemma gone) — used 256. Attacker kept for
 future pools: models/aegis_adv_attacker_varkadv_best.
+
+## Erratum (2026-10-12)
+
+"Below the scripted ~0.05": the ~0.05 is a fixed string in the round-A log message of
+`train/train_aegis_adv.py`, not a measurement. Scripted raids on the same cells (8v8 and
+15v15, K=3, realism) gave vark a breach rate of 0.006–0.013 for direct raids and 0.000
+for saturation raids (`experiments/varkstress_20260830/vark_base_k3.log`), so the learned
+attacker's 0.009–0.013 is comparable to scripted direct raids, not lower. The no-gap
+verdict (true breach 0.005 < 0.08) is unaffected.

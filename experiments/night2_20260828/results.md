@@ -1,6 +1,6 @@
 # Night 2 (2026-08-27/28) — CrazyFlie-Ready Policy + Convoy Escort
 
-## ⭐ `aegis_cf_lab` — the validated CrazyFlie 2.1 policy (Phase-5 gateway)
+## `aegis_cf_lab` — the validated CrazyFlie 2.1 policy (Phase-5 gateway)
 Strategy: **pure unit mapping** (design-reviewed): L=125, T=√2 → the sim policy
 runs a real 8×8 m lab at **0.34 m/s max, 3 m/s² (17° tilt), 8.49 Hz control**,
 gravity compensation cancels on both sides. Trained with the **minimal sensor
