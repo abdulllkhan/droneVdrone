@@ -9,6 +9,10 @@ outnumbered 20v40 without having trained at those sizes, and a single checkpoint
 four protected points. A deployment path to CrazyFlie 2.1 nano-drones is built and verified in
 simulation and software dry runs; it has **not yet flown on hardware**.
 
+**Paper:** [paper.pdf](paper.pdf) is a 2-page write-up of the design, the results and how the project got here
+([LaTeX source](paper.tex); [`figures/make_figures.py`](figures/make_figures.py) rebuilds its figures from the
+tracked evaluation CSVs and replays).
+
 <p align="center">
   <img src="docs/media/aegis_big24_30v30_hills.gif" width="560" alt="Top-down replay: 30 blue defenders intercept 30 red attackers around a protected point among hills">
   <br>
@@ -225,6 +229,7 @@ python -m deploy.cf_bridge --model models/aegis_adv_defender_cf_lab_best/best_mo
 ## Repository layout
 
 ```
+paper.tex, paper.pdf       2-page paper; figures/ holds its figures and make_figures.py
 envs/aegis_env.py          AEGIS environment: GPU physics, per-world team sizes, terrain, raids, rewards, 56-dim obs
 envs/allocator.py          intercept-time cost matrix, Hungarian assignment (greedy fallback), guard ring
 train/train_aegis.py       gated 4-stage PPO curriculum
